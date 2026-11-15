@@ -21,7 +21,8 @@ export async function main(ns) {
     }
 
     if (summary.copied.length || summary.caches.length || summary.errors.length) {
-        for (let attempt = 0; attempt < 5; attempt++) {
+        // Bitburner 3.0.1 charges the identifier "attempt" as a 10 GB coding-contract API call.
+        for (let reportRetry = 0; reportRetry < 5; reportRetry++) {
             if (sendReport(ns, port, summary)) return;
             await ns.sleep(1_000);
         }

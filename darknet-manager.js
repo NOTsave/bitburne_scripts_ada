@@ -105,8 +105,10 @@ export async function main(ns) {
     }
     try {
         const saved = JSON.parse(ns.read(STATE_FILE));
-        if (saved.reportPort === reportPort && saved.version === WORKER_VERSION) {
-            if (!existing && Number.isSafeInteger(saved.offlineEpoch)) offlineEpoch = saved.offlineEpoch;
+        if (saved.reportPort === reportPort) {
+            if (!existing && saved.version === WORKER_VERSION && Number.isSafeInteger(saved.offlineEpoch)) {
+                offlineEpoch = saved.offlineEpoch;
+            }
             collected.files = saved.collected?.files ?? 0;
             collected.caches = saved.collected?.caches ?? 0;
         }

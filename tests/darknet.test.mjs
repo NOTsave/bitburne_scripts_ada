@@ -217,7 +217,7 @@ test("reclaiming local RAM can discover and open a newly generated cache on the 
     assert.deepEqual(calls, [["ram", undefined], ["collect", COLLECTOR, {preventDuplicates: true}, 50, 123]]);
 });
 
-test("manager replaces old workers on its own ports and counts collection results", async () => {
+test("manager replaces old workers on its own ports and preserves collection totals on upgrade", async () => {
     const stop = new Error("end of test");
     const old = {pid: 20, filename: WORKER, args: [50, 51, 12]};
     const other = {pid: 21, filename: WORKER, args: [60, 61, 12]};
@@ -227,7 +227,8 @@ test("manager replaces old workers on its own ports and counts collection result
     const ns = {
         pid: 1, flags: () => ({port: 50}), getHostname: () => "home", getScriptName: () => "darknet-manager.js",
         ps: host => host === "home" ? [] : [old, other],
-        read: () => "", disableLog() {}, print() {}, tprint: assert.fail,
+        read: () => JSON.stringify({reportPort: 50, offlineEpoch: 12, version: 2, collected: {files: 2, caches: 1}}),
+        disableLog() {}, print() {}, tprint: assert.fail,
         getPortHandle: port => port === 50 ? {empty: () => inbox.length === 0, read: () => inbox.shift()} : {clear() {}},
         tryWritePort: () => true,
         fileExists: () => true,
@@ -242,5 +243,5 @@ test("manager replaces old workers on its own ports and counts collection result
     };
     await assert.rejects(manager(ns), error => error === stop);
     assert.deepEqual(killed, [old.pid]);
-    assert.deepEqual(snapshot.collected, {files: 1, caches: 1});
+    assert.deepEqual(snapshot.collected, {files: 3, caches: 2});
 });
