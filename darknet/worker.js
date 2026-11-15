@@ -1,4 +1,4 @@
-import { BUNDLE, COLLECTOR, HOME, REPORT_INTERVAL, WORKER, sendReport } from "./protocol.js";
+import { BUNDLE, COLLECTOR, HOME, REPORT_INTERVAL, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
 import { isSupported, puzzleAnswer } from "./solvers.js";
 
 export function freeRam(ns, host) {
@@ -50,18 +50,26 @@ export async function deploy(ns, target, workerArgs) {
     return pid > 0 ? "worker launched" : "launch declined";
 }
 
-async function runCollector(ns, host, reportPort, offlineEpoch) {
+async function maintainRewards(ns, host, reportPort, offlineEpoch) {
     const files = ns.ls(host);
-    const hasCollectibles = files.some(name => name.endsWith(".cache") ||
-        (/\.(lit|txt)$/.test(name) && !ns.fileExists(name, HOME)));
-    if (!hasCollectibles) return;
+    const pending = files.filter(name => name.endsWith(".cache") ||
+        (/\.(lit|txt)$/.test(name) && !ns.fileExists(name, HOME))).length;
     const requiredRam = ns.getScriptRam(COLLECTOR, host);
-    if (freeRam(ns, host) < requiredRam && ns.dnet.getBlockedRam(host) > 0) {
-        await ns.dnet.memoryReallocation();
+    const blockedRam = ns.dnet.getBlockedRam(host);
+    const args = [reportPort, offlineEpoch];
+
+    if (pending && ns.isRunning(COLLECTOR, host, ...args)) return "collecting";
+    if (pending && requiredRam <= 0) return "collector missing or invalid";
+    if (pending && freeRam(ns, host) >= requiredRam) {
+        if (ns.run(COLLECTOR, { preventDuplicates: true }, ...args) > 0) return "collecting";
+        return "collector launch declined";
     }
-    if (requiredRam > 0 && freeRam(ns, host) >= requiredRam) {
-        ns.run(COLLECTOR, { preventDuplicates: true }, reportPort, offlineEpoch);
+    if (blockedRam > 0) {
+        // Releasing all blocked RAM can create a new cache.
+        const result = await ns.dnet.memoryReallocation();
+        return result.success ? "reclaimed RAM" : `RAM reallocation failed: ${result.message}`;
     }
+    return pending ? `${pending} collectible(s) waiting for ${requiredRam} GB of free RAM` : "no collectibles";
 }
 
 /** @param {NS} ns */
@@ -71,12 +79,25 @@ export async function main(ns) {
     const jobs = ns.getPortHandle(jobPort);
     let lastJob = "";
     let result;
+    let rewards;
 
     while (true) {
         try {
             const neighbors = observeNeighbors(ns);
-            sendReport(ns, reportPort, { type: "heartbeat", offlineEpoch, neighbors, free: freeRam(ns, host), result });
+            sendReport(ns, reportPort, {
+                type: "heartbeat", version: WORKER_VERSION, offlineEpoch,
+                neighbors, free: freeRam(ns, host), result, rewards,
+            });
 
+            const plan = jobs.peek();
+            if (host !== HOME && plan?.offlineEpoch === offlineEpoch &&
+                Date.now() - plan.at < 2 * REPORT_INTERVAL) {
+                try {
+                    rewards = await maintainRewards(ns, host, reportPort, offlineEpoch);
+                } catch (error) {
+                    rewards = String(error);
+                }
+            }
             const assignment = jobs.peek();
             const job = assignment?.offlineEpoch === offlineEpoch && assignment.jobs.find(
                 candidate => candidate.worker === host && candidate.pid === ns.pid && candidate.expires > Date.now(),
@@ -85,14 +106,11 @@ export async function main(ns) {
                 lastJob = job.id;
                 let status;
                 try {
-                    status = await deploy(ns, job.target, [reportPort, jobPort, offlineEpoch]);
+                    status = await deploy(ns, job.target, [reportPort, jobPort, offlineEpoch, WORKER_VERSION]);
                 } catch (error) {
                     status = String(error);
                 }
                 result = { id: job.id, target: job.target, status };
-            } else if (host !== HOME && assignment?.offlineEpoch === offlineEpoch &&
-                Date.now() - assignment.at < 2 * REPORT_INTERVAL) {
-                await runCollector(ns, host, reportPort, offlineEpoch);
             }
         } catch (error) {
             ns.print(String(error));

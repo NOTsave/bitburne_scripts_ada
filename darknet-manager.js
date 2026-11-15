@@ -1,4 +1,4 @@
-import { HOME, JOB_TTL, RETRY_DELAY, SIGHTING_TTL, WORKER } from "./darknet/protocol.js";
+import { HOME, JOB_TTL, RETRY_DELAY, SIGHTING_TTL, WORKER, WORKER_VERSION } from "./darknet/protocol.js";
 
 const STATE_FILE = "data/darknet-state.txt";
 const FLAGS = [["port", 10150], ["help", false]];
@@ -20,19 +20,29 @@ export function assignJobs(workers, jobs, retryAt, now, nextId) {
     }
 }
 
-function consumeReports(ns, port, offlineEpoch, workers, jobs, retryAt) {
+function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected) {
     while (!port.empty()) {
         const report = port.read();
         if (!report || typeof report.host !== "string") continue;
         if (report.type === "collection") {
             if (report.offlineEpoch === offlineEpoch) {
+                collected.files += report.copied.length;
+                collected.caches += report.caches.length;
                 ns.print(`${report.host} collected ${JSON.stringify({
                     files: report.copied, caches: report.caches, errors: report.errors,
                 })}`);
             }
             continue;
         }
-        if (report.type !== "heartbeat" || report.offlineEpoch !== offlineEpoch) continue;
+        if (report.type !== "heartbeat") continue;
+        if (report.version !== WORKER_VERSION) {
+            const oldWorker = ns.ps(report.host).find(script =>
+                script.pid === report.pid && script.filename.replace(/^\//, "") === WORKER &&
+                script.args[0] === reportPort && script.args[1] === reportPort + 1);
+            if (oldWorker && ns.kill(oldWorker.pid)) ns.print(`Restarting outdated worker on ${report.host}.`);
+            continue;
+        }
+        if (report.offlineEpoch !== offlineEpoch) continue;
         if (report.at < (workers.get(report.host)?.at ?? 0)) continue;
         workers.set(report.host, report);
         if (report.result) {
@@ -84,22 +94,24 @@ export async function main(ns) {
     const jobs = new Map();
     const retryAt = new Map();
     let checkpointAt = 0;
+    const collected = { files: 0, caches: 0 };
 
     // Rejoin workers left running by an earlier manager on the same ports.
     const existing = ns.ps(HOME).find(script => script.filename.replace(/^\//, "") === WORKER &&
-        script.args[0] === reportPort && script.args[1] === jobPort);
+        script.args[0] === reportPort && script.args[1] === jobPort && script.args[3] === WORKER_VERSION);
     if (existing) {
         rootPid = existing.pid;
         offlineEpoch = existing.args[2];
-    } else {
-        try {
-            const saved = JSON.parse(ns.read(STATE_FILE));
-            if (saved.reportPort === reportPort && Number.isSafeInteger(saved.offlineEpoch)) {
-                offlineEpoch = saved.offlineEpoch;
-            }
-        } catch {
-            // An absent or invalid snapshot is recoverable from fresh reports.
+    }
+    try {
+        const saved = JSON.parse(ns.read(STATE_FILE));
+        if (saved.reportPort === reportPort && saved.version === WORKER_VERSION) {
+            if (!existing && Number.isSafeInteger(saved.offlineEpoch)) offlineEpoch = saved.offlineEpoch;
+            collected.files = saved.collected?.files ?? 0;
+            collected.caches = saved.collected?.caches ?? 0;
         }
+    } catch {
+        // An absent or invalid snapshot is recoverable from fresh reports.
     }
     publish(ns, assignments, jobPort, offlineEpoch, jobs);
 
@@ -112,11 +124,11 @@ export async function main(ns) {
     while (true) {
         const now = Date.now();
         if (!rootPid || !ns.isRunning(rootPid)) {
-            rootPid = ns.run(WORKER, { preventDuplicates: true }, reportPort, jobPort, offlineEpoch);
+            rootPid = ns.run(WORKER, { preventDuplicates: true }, reportPort, jobPort, offlineEpoch, WORKER_VERSION);
             if (!rootPid) ns.print("Waiting for enough home RAM to start the Darknet worker.");
         }
 
-        consumeReports(ns, reports, offlineEpoch, workers, jobs, retryAt);
+        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected);
         for (const [target, job] of jobs) {
             if (job.expires <= now || !ns.isRunning(job.pid)) jobs.delete(target);
         }
@@ -127,10 +139,13 @@ export async function main(ns) {
         publish(ns, assignments, jobPort, offlineEpoch, jobs);
 
         if (now >= checkpointAt) {
-            const snapshot = [...workers.values()].map(({ host, at, free, neighbors }) => ({
-                host, at, free, neighbors, stale: now - at > SIGHTING_TTL,
+            const snapshot = [...workers.values()].map(({ host, at, free, neighbors, rewards }) => ({
+                host, at, free, neighbors, rewards, stale: now - at > SIGHTING_TTL,
             }));
-            ns.write(STATE_FILE, JSON.stringify({ at: now, reportPort, offlineEpoch, workers: snapshot, jobs: [...jobs.values()] }, null, 2), "w");
+            ns.write(STATE_FILE, JSON.stringify({
+                version: WORKER_VERSION, at: now, reportPort, offlineEpoch, collected,
+                workers: snapshot, jobs: [...jobs.values()],
+            }, null, 2), "w");
             checkpointAt = now + 5_000;
         }
         await ns.sleep(1_000);

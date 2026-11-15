@@ -9,7 +9,7 @@ export async function main(ns) {
     for (const name of ns.ls(host)) {
         try {
             if (name.endsWith(".cache")) {
-                const reward = ns.dnet.openCache(name, true);
+                const reward = ns.dnet.openCache(name);
                 summary.caches.push({ name, reward });
             } else if (/\.(lit|txt)$/.test(name) && !ns.fileExists(name, HOME)) {
                 if (ns.scp(name, HOME, host)) summary.copied.push(name);
