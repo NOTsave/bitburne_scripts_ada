@@ -28,6 +28,13 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
             if (report.offlineEpoch === offlineEpoch) {
                 collected.files += report.copied.length;
                 collected.caches += report.caches.length;
+                for (const entry of report.caches) {
+                    if (!collected.lastReward || entry.openedAt >= collected.lastReward.openedAt) {
+                        collected.lastReward = {
+                            host: report.host, filename: entry.name, openedAt: entry.openedAt, reward: entry.reward,
+                        };
+                    }
+                }
                 ns.print(`${report.host} collected ${JSON.stringify({
                     files: report.copied, caches: report.caches, errors: report.errors,
                 })}`);
@@ -94,7 +101,7 @@ export async function main(ns) {
     const jobs = new Map();
     const retryAt = new Map();
     let checkpointAt = 0;
-    const collected = { files: 0, caches: 0 };
+    const collected = { files: 0, caches: 0, lastReward: null };
 
     // Rejoin workers left running by an earlier manager on the same ports.
     const existing = ns.ps(HOME).find(script => script.filename.replace(/^\//, "") === WORKER &&
@@ -111,6 +118,7 @@ export async function main(ns) {
             }
             collected.files = saved.collected?.files ?? 0;
             collected.caches = saved.collected?.caches ?? 0;
+            collected.lastReward = saved.collected?.lastReward ?? null;
         }
     } catch {
         // An absent or invalid snapshot is recoverable from fresh reports.
