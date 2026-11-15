@@ -17,6 +17,7 @@ import {
 
 // These parameters are meant to let you tweak the script's behaviour from the command line (without altering source code)
 let options;
+const darknetManagerPath = 'darknet-manager.js';
 const argsSchema = [
     // Behaviour-changing flags
     ['disable-stock-manipulation', false], // You must now opt *out* of stock-manipulation mode by enabling this flag.
@@ -46,6 +47,9 @@ const argsSchema = [
 
     ['disable-script', []], // The names of scripts that you do not want run by our scheduler
     ['run-script', []], // The names of additional scripts that you want daemon to run on home
+    ['darknet-min-home-ram', 64], // Minimum home RAM in GB before auto-starting Darknet.
+    ['darknet-ram-headroom', 16], // Free home RAM to leave after budgeting for the manager and its first worker.
+    ['darknet-warmup-ms', 300_000], // Time since the current BitNode began before auto-starting Darknet.
 
     ['max-purchased-server-spend', 0.25], // Percentage of total hack income earnings we're willing to re-invest in new hosts (extra RAM in the current aug only)
 
@@ -131,6 +135,8 @@ export async function main(ns) {
     // Helper dict for remembering the names and costs of the scripts we use the most
     let toolsByShortName = (/**@returns{{[id: string]: Tool;}}*/() => undefined)(); // Dictionary of tools keyed by tool short name
     let allHelpersRunning = false; // Tracks whether all long-lived helper scripts have been launched
+    let nextDarknetCheck = 0;
+    let darknetStatus;
     let studying = false; // Whether we're currently studying
 
     // Command line Flags
@@ -376,7 +382,9 @@ export async function main(ns) {
             },
         ];
         // Add any additional scripts to be run provided by --run-script arguments
-        options['run-script'].forEach(s => asynchronousHelpers.push({ name: s }));
+        // The Darknet manager uses the dedicated home-only readiness check.
+        options['run-script'].filter(path => path.replace(/^\//, '') !== darknetManagerPath)
+            .forEach(s => asynchronousHelpers.push({ name: s }));
         // Set these helper functions to not be marked as "temporary" when they are run (save their execution state)
         asynchronousHelpers.forEach(helper => helper.runOptions = { temporary: false });
         asynchronousHelpers.forEach(helper => helper.isLaunched = false);
@@ -693,6 +701,62 @@ export async function main(ns) {
         server.resetCaches(); // If rooted status was cached, we must now reset it
     }
 
+    async function checkDarknetManager(ns) {
+        const now = Date.now();
+        if (now < nextDarknetCheck) return;
+        nextDarknetCheck = now + 30_000;
+
+        let status;
+        if (options['disable-script'].some(path => path.replace(/^\//, '') === darknetManagerPath))
+            status = 'disabled';
+        else if (processList(ns, 'home', false).some(process => process.filename.replace(/^\//, '') === darknetManagerPath))
+            status = 'running on home';
+        else if (!ns.read(darknetManagerPath) || !ns.read('darknet/worker.js'))
+            status = 'waiting for Darknet scripts';
+        else if (homeServer.totalRam(true) < options['darknet-min-home-ram'] ||
+            homeServer.ramAvailable(true) < options['darknet-ram-headroom'] ||
+            homeReservedRam >= homeServer.totalRam(true))
+            status = 'waiting for home RAM';
+        else {
+            // Keep the readiness-only APIs out of the daemon's static RAM budget.
+            let readiness;
+            try {
+                readiness = await getNsDataThroughFile(ns, `({
+                    hasTor: ns.hasTorRouter(),
+                    hasNavigator: ns.fileExists("DarkscapeNavigator.exe", "home"),
+                    lastNodeReset: ns.getResetInfo().lastNodeReset,
+                    scriptRam: ns.args.map(path => ns.getScriptRam(path, "home"))
+                })`, '/Temp/daemon-darknet-readiness.txt',
+                    [darknetManagerPath, 'darknet/worker.js'], false, 1, 0, true);
+            } catch {
+                // A temporary home RAM shortage can prevent the readiness probe.
+            }
+            if (!readiness)
+                status = 'waiting for readiness check';
+            else if (!readiness.hasTor)
+                status = 'waiting for TOR router';
+            else if (!readiness.hasNavigator)
+                status = 'waiting for navigator';
+            else if (options['darknet-warmup-ms'] > 0 &&
+                (!Number.isFinite(readiness.lastNodeReset) || now - readiness.lastNodeReset < options['darknet-warmup-ms']))
+                status = 'waiting for BitNode warm-up';
+            else if (readiness.scriptRam.some(ram => !(ram > 0)))
+                status = 'waiting for valid Darknet scripts';
+            else if (homeServer.ramAvailable(true) <
+                readiness.scriptRam[0] + readiness.scriptRam[1] + options['darknet-ram-headroom'])
+                status = 'waiting for home RAM';
+            else if (processList(ns, 'home', false).some(process => process.filename.replace(/^\//, '') === darknetManagerPath))
+                status = 'running on home';
+            else
+                status = ns.exec(darknetManagerPath, 'home', { threads: 1, preventDuplicates: true })
+                    ? 'started on home' : 'waiting to launch on home';
+        }
+
+        if (darknetStatus !== status && !(darknetStatus === 'started on home' && status === 'running on home'))
+            log(ns, `Darknet manager: ${status}.`);
+        darknetStatus = status;
+    }
+
     // Main targeting loop
     /** @param {NS} ns **/
     async function doTargetingLoop(ns) {
@@ -713,6 +777,7 @@ export async function main(ns) {
                     allHelpersRunning = await runStartupScripts(ns);
                 // Run some auxilliary processes that ease the ram burden of this daemon and add additional functionality (like managing hacknet or buying servers)
                 await runPeriodicScripts(ns);
+                await checkDarknetManager(ns);
                 if (stockMode) await updateStockPositions(ns); // In stock market manipulation mode, get our current position in all stocks, as it affects targetting order
                 // For early players, change behaviour slightly
                 const homeRam = homeServer.totalRam(true);
