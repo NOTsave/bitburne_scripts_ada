@@ -18,6 +18,7 @@ import {
 // These parameters are meant to let you tweak the script's behaviour from the command line (without altering source code)
 let options;
 const darknetManagerPath = 'darknet-manager.js';
+const darknetNavigator = 'DarkscapeNavigator.exe';
 const argsSchema = [
     // Behaviour-changing flags
     ['disable-stock-manipulation', false], // You must now opt *out* of stock-manipulation mode by enabling this flag.
@@ -137,6 +138,7 @@ export async function main(ns) {
     let allHelpersRunning = false; // Tracks whether all long-lived helper scripts have been launched
     let nextDarknetCheck = 0;
     let darknetStatus;
+    let torRouterOwned = false;
     let studying = false; // Whether we're currently studying
 
     // Command line Flags
@@ -397,8 +399,13 @@ export async function main(ns) {
         // Note: Periodic script are generally run every 30 seconds, but intervals are spaced out to ensure they aren't all bursting into temporary RAM at the same time.
         periodicScripts = [
             // Buy tor as soon as we can if we haven't already, and all the port crackers
-            { interval: 25000, name: "/Tasks/tor-manager.js", shouldRun: () => 4 in dictSourceFiles && !allHostNames.includes("darkweb") },
-            { interval: 26000, name: "/Tasks/program-manager.js", shouldRun: () => 4 in dictSourceFiles && ownedCracks.length != 5 },
+            { interval: 25000, name: "/Tasks/tor-manager.js", shouldRun: () => shouldBuyTor(ns) },
+            {
+                interval: 26000, name: "/Tasks/program-manager.js",
+                shouldRun: async () => 4 in dictSourceFiles && (ownedCracks.length != 5 ||
+                    (!darknetDisabled() && homeServer.totalRam(true) >= 32 && !(await doesFileExist(ns, darknetNavigator)))),
+                args: () => darknetDisabled() ? ['--skip-darkscape'] : [],
+            },
             { interval: 27000, name: "/Tasks/contractor.js", minRamReq: 14.2 }, // Periodically look for coding contracts that need solving
             // Buy every hacknet upgrade with up to 4h payoff if it is less than 10% of our current money or 8h if it is less than 1% of our current money.
             { interval: 28000, name: "hacknet-upgrade-manager.js", shouldRun: shouldUpgradeHacknet, args: () => ["-c", "--max-payoff-time", "4h", "--max-spend", getPlayerMoney(ns) * 0.1] },
@@ -701,13 +708,28 @@ export async function main(ns) {
         server.resetCaches(); // If rooted status was cached, we must now reset it
     }
 
+    async function shouldBuyTor(ns) {
+        if (!(4 in dictSourceFiles) || torRouterOwned) return false;
+        try {
+            torRouterOwned = await getNsDataThroughFile(ns, 'ns.hasTorRouter()', '/Temp/daemon-tor-status.txt',
+                [], false, 1, 0, true);
+        } catch {
+            // The purchase task also checks TOR if there was no RAM for the probe.
+        }
+        return !torRouterOwned;
+    }
+
+    function darknetDisabled() {
+        return options['disable-script'].some(path => path.replace(/^\//, '') === darknetManagerPath);
+    }
+
     async function checkDarknetManager(ns) {
         const now = Date.now();
         if (now < nextDarknetCheck) return;
         nextDarknetCheck = now + 30_000;
 
         let status;
-        if (options['disable-script'].some(path => path.replace(/^\//, '') === darknetManagerPath))
+        if (darknetDisabled())
             status = 'disabled';
         else if (processList(ns, 'home', false).some(process => process.filename.replace(/^\//, '') === darknetManagerPath))
             status = 'running on home';

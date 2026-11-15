@@ -1,25 +1,15 @@
-/** @param {NS} ns
- * the purpose of tor-manager is to buy the TOR router ASAP
- * so that another script can buy the port breakers. This script
- * dies a natural death once tor is bought. **/
+/** @param {NS} ns */
 export async function main(ns) {
-    const interval = 2000;
-
-    var keepRunning = ns.args.length > 0 && ns.args[0] == "-c";
+    const keepRunning = ns.args.includes("-c");
+    if (ns.hasTorRouter()) return ns.print("Player already has Tor");
     if (!keepRunning)
-        ns.print(`tor-manager will run once. Run with argument "-c" to run continuously.`)
+        ns.print('tor-manager will run once. Run with argument "-c" to run continuously.');
 
-    let hasTor = () => ns.scan("home").includes("darkweb");
-    if (hasTor())
-        return ns.print('Player already has Tor');
     do {
-        if (hasTor()) {
-            ns.toast(`Purchased the Tor router!`, 'success');
-            break;
+        if (ns.singularity.purchaseTor() || ns.hasTorRouter()) {
+            ns.toast("Purchased the Tor router!", "success");
+            return;
         }
-        ns.singularity.purchaseTor();
-        if (keepRunning)
-            await ns.sleep(interval);
-    }
-    while (keepRunning);
+        if (keepRunning) await ns.sleep(2_000);
+    } while (keepRunning);
 }
