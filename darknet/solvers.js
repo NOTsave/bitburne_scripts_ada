@@ -73,6 +73,11 @@ function singlePuzzleAnswer(details) {
 }
 
 export function puzzleCandidates(details) {
+    if (details.modelId === "AccountsManager_4.2") {
+        if (details.passwordFormat !== "numeric" || details.passwordLength !== 1 ||
+            details.passwordHint !== "The password is a number between 0 and 10") return [];
+        return "0123456789".split("");
+    }
     if (details.modelId === "Laika4") {
         return details.passwordFormat === "alphabetic" ? (LAIKA_NAMES[details.passwordLength] ?? []) : [];
     }

@@ -24,7 +24,7 @@ export function observeNeighbors(ns) {
     return neighbors;
 }
 
-export async function deploy(ns, target, workerArgs, recover = false) {
+export async function deploy(ns, target, workerArgs, recover = false, deadline = Infinity) {
     const details = ns.dnet.getServerDetails(target);
     if (!details.isOnline || (!recover && !details.isConnectedToCurrentServer)) return "link lost";
     if (recover && !ns.dnet.getStasisLinkedServers().includes(target)) return "stasis link lost";
@@ -35,6 +35,7 @@ export async function deploy(ns, target, workerArgs, recover = false) {
 
         let solved = false;
         for (const answer of choices) {
+            if (Date.now() >= deadline) return "puzzle job expired";
             const result = recover ? ns.dnet.connectToSession(target, answer) : await ns.dnet.authenticate(target, answer);
             if (result.success) {
                 solved = true;
@@ -149,7 +150,7 @@ export async function main(ns) {
                         }
                     } else {
                         status = await deploy(ns, job.target, [reportPort, jobPort, offlineEpoch, WORKER_VERSION],
-                            job.kind === "recover");
+                            job.kind === "recover", job.expires);
                     }
                 } catch (error) {
                     status = String(error);
