@@ -48,6 +48,25 @@ function singlePuzzleAnswer(details) {
             const answer = DESK_MEMO_HINT.exec(details.passwordHint)?.[1];
             return answer?.length === details.passwordLength ? answer : undefined;
         }
+        case "BellaCuore": {
+            if (details.passwordFormat !== "numeric" || typeof details.data !== "string") return undefined;
+            const digits = details.data.trim().toUpperCase();
+            // The same model also produces range clues such as "IX,XX". Only single values resolve here.
+            if (digits !== "NULLA" &&
+                (!digits || !/^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$/.test(digits))) {
+                return undefined;
+            }
+            let decimal = 0;
+            if (digits !== "NULLA") {
+                const values = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+                for (let index = 0; index < digits.length; index++) {
+                    const value = values[digits[index]];
+                    decimal += value < values[digits[index + 1]] ? -value : value;
+                }
+            }
+            const answer = String(decimal);
+            return answer.length === details.passwordLength ? answer : undefined;
+        }
         case "110100100": {
             if (typeof details.data !== "string") return undefined;
             const bytes = details.data.trim().split(/\s+/);
