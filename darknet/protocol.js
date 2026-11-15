@@ -1,4 +1,4 @@
-export const WORKER_VERSION = 9;
+export const WORKER_VERSION = 10;
 export const HOME = "home";
 export const WORKER = "darknet/worker.js";
 export const COLLECTOR = "darknet/collect.js";

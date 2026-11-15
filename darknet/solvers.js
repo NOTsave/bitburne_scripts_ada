@@ -72,7 +72,26 @@ function singlePuzzleAnswer(details) {
     }
 }
 
+function sortedDigitOrders(details) {
+    if (details.passwordFormat !== "numeric" || typeof details.data !== "string") return [];
+    const digits = details.data.trim();
+    if (!/^\d{1,3}$/.test(digits) || digits.length !== details.passwordLength) return [];
+
+    let orders = new Set([""]);
+    for (const digit of digits) {
+        const next = new Set();
+        for (const order of orders) {
+            for (let index = 0; index <= order.length; index++) {
+                next.add(order.slice(0, index) + digit + order.slice(index));
+            }
+        }
+        orders = next;
+    }
+    return [...orders].filter(order => order === "0" || !order.startsWith("0")).sort();
+}
+
 export function puzzleCandidates(details) {
+    if (details.modelId === "PHP 5.4") return sortedDigitOrders(details);
     if (details.modelId === "AccountsManager_4.2") {
         if (details.passwordFormat !== "numeric" || details.passwordLength !== 1 ||
             details.passwordHint !== "The password is a number between 0 and 10") return [];
