@@ -7,6 +7,12 @@ const FRESH_INSTALL_ANSWERS = {
     "numeric:5": "12345",
 };
 
+const LAIKA_NAMES = {
+    3: ["max"],
+    4: ["fido", "spot"],
+    5: ["rover"],
+};
+
 const DESK_MEMO_HINT = /^(?:The password is|The PIN is|Remember to use|It's set to|The key is|The secret is) (\d{1,3})$/;
 
 function solveOctantVoxel(clue) {
@@ -32,7 +38,7 @@ function solveOctantVoxel(clue) {
 }
 
 // Game puzzle answers only. undefined means there is no recognized answer.
-export function puzzleAnswer(details) {
+function singlePuzzleAnswer(details) {
     switch (details.modelId) {
         case "ZeroLogon":
             return "";
@@ -55,6 +61,19 @@ export function puzzleAnswer(details) {
     }
 }
 
+export function puzzleCandidates(details) {
+    if (details.modelId === "Laika4") {
+        return details.passwordFormat === "alphabetic" ? (LAIKA_NAMES[details.passwordLength] ?? []) : [];
+    }
+    const answer = singlePuzzleAnswer(details);
+    return answer === undefined ? [] : [answer];
+}
+
+export function puzzleAnswer(details) {
+    const choices = puzzleCandidates(details);
+    return choices.length === 1 ? choices[0] : undefined;
+}
+
 export function isSupported(details) {
-    return puzzleAnswer(details) !== undefined;
+    return puzzleCandidates(details).length > 0;
 }

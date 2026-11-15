@@ -1,5 +1,5 @@
 import { BUNDLE, COLLECTOR, HOME, MIGRATION, REPORT_INTERVAL, STASIS, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
-import { isSupported, puzzleAnswer } from "./solvers.js";
+import { isSupported, puzzleAnswer, puzzleCandidates } from "./solvers.js";
 
 export function freeRam(ns, host) {
     return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
@@ -30,10 +30,20 @@ export async function deploy(ns, target, workerArgs, recover = false) {
     if (recover && !ns.dnet.getStasisLinkedServers().includes(target)) return "stasis link lost";
 
     if (!details.hasSession) {
-        const answer = puzzleAnswer(details);
-        if (answer === undefined) return "unsupported model";
-        const result = recover ? ns.dnet.connectToSession(target, answer) : await ns.dnet.authenticate(target, answer);
-        if (!result.success) return "puzzle rejected";
+        const choices = recover ? [puzzleAnswer(details)] : puzzleCandidates(details);
+        if (!choices.length || choices[0] === undefined) return "unsupported model";
+
+        let solved = false;
+        for (const answer of choices) {
+            const result = recover ? ns.dnet.connectToSession(target, answer) : await ns.dnet.authenticate(target, answer);
+            if (result.success) {
+                solved = true;
+                break;
+            }
+            // Try the next in-game answer only when Bitburner reports an incorrect password.
+            if (result.code !== 401) return result.message ?? "puzzle rejected";
+        }
+        if (!solved) return "puzzle rejected";
     }
 
     const workerRam = ns.getScriptRam(WORKER, ns.getHostname());
@@ -97,7 +107,7 @@ export async function main(ns) {
                 location = {
                     depth: details.depth,
                     movable: !details.isStationary,
-                    canAnchor: stasisRam > 0 && isSupported(details) && free + self.ramUsage * self.threads >= stasisRam,
+                    canAnchor: stasisRam > 0 && puzzleAnswer(details) !== undefined && free + self.ramUsage * self.threads >= stasisRam,
                     canCharge: migrateRam > 0 && free >= migrateRam,
                 };
             }
