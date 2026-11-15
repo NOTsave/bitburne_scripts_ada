@@ -1,13 +1,85 @@
 import { HOME, JOB_TTL, RETRY_DELAY, SIGHTING_TTL, WORKER, WORKER_VERSION } from "./darknet/protocol.js";
+import { puzzleAnswer } from "./darknet/solvers.js";
 
 const STATE_FILE = "data/darknet-state.txt";
-const FLAGS = [["port", 10150], ["help", false]];
+const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["help", false]];
+const MIGRATION_INTERVAL = 60_000;
+
+function fresh(worker, now) {
+    return worker && now - worker.at <= SIGHTING_TTL;
+}
+
+function queueJob(jobs, kind, target, worker, now, nextId, riderPid) {
+    jobs.set(target, { id: nextId(), kind, target, worker: worker.host, pid: worker.pid, expires: now + JOB_TTL, riderPid });
+}
+
+/** Assign at most one stasis handoff and one migration batch. */
+export function assignRoutes(workers, jobs, retryAt, routing, now, nextId) {
+    const active = [...workers.values()].filter(worker => fresh(worker, now));
+    const outstanding = [...jobs.values()];
+    const busy = new Set(outstanding.map(job => job.worker));
+    const available = worker => !busy.has(worker.host) && !jobs.has(worker.host) && (retryAt.get(worker.host) ?? 0) <= now;
+
+    if (!routing.links.length && routing.autoStasis && now >= routing.nextStasisAt &&
+        !outstanding.some(job => job.kind === "stasis")) {
+        const candidates = active.filter(worker => worker.location?.movable && worker.location.canAnchor && available(worker));
+        candidates.sort((a, b) => a.location.depth - b.location.depth || b.neighbors.length - a.neighbors.length);
+        if (candidates.length) {
+            const hub = candidates[0];
+            routing.nextStasisAt = now + MIGRATION_INTERVAL;
+            queueJob(jobs, "stasis", hub.host, hub, now, nextId);
+            return;
+        }
+    }
+
+    if (!routing.hub || !routing.sessionVerified) return;
+    const anchor = workers.get(routing.hub);
+    if (!fresh(anchor, now)) {
+        const root = workers.get(HOME);
+        if (fresh(root, now) && available(root) && !jobs.has(routing.hub) && (retryAt.get(routing.hub) ?? 0) <= now) {
+            queueJob(jobs, "recover", routing.hub, root, now, nextId);
+        }
+        return;
+    }
+
+    if (!routing.migrate || now < routing.nextMigrationAt || !anchor.location?.canCharge || !available(anchor) ||
+        outstanding.length || active.some(worker => worker.neighbors.some(
+            neighbor => neighbor.supported && !fresh(workers.get(neighbor.host), now) &&
+                (retryAt.get(neighbor.host) ?? 0) <= now))) return;
+
+    const rider = anchor.neighbors.map(neighbor => workers.get(neighbor.host)).find(worker =>
+        fresh(worker, now) && worker.location?.movable && available(worker) &&
+        !routing.links.includes(worker.host));
+    if (rider) {
+        routing.nextMigrationAt = now + MIGRATION_INTERVAL;
+        queueJob(jobs, "migrate", rider.host, anchor, now, nextId, rider.pid);
+    }
+}
+
+function refreshLinks(ns, routing, now) {
+    if (now < routing.nextLinkCheckAt) return;
+    routing.nextLinkCheckAt = now + 5_000;
+    routing.links = ns.dnet.getStasisLinkedServers();
+    if (!routing.links.includes(routing.hub)) {
+        routing.hub = routing.links.find(host => {
+            const details = ns.dnet.getServerDetails(host);
+            return details.isOnline && puzzleAnswer(details) !== undefined;
+        }) ?? null;
+        routing.sessionVerified = false;
+    }
+    if (routing.hub && !routing.sessionVerified) {
+        const details = ns.dnet.getServerDetails(routing.hub);
+        const answer = puzzleAnswer(details);
+        routing.sessionVerified = details.isOnline && answer !== undefined &&
+            ns.dnet.connectToSession(routing.hub, answer).success;
+    }
+}
 
 /** The manager has exclusive use of the configured port and the next port. */
 export function assignJobs(workers, jobs, retryAt, now, nextId) {
     const busyWorkers = new Set([...jobs.values()].map(job => job.worker));
     for (const worker of workers.values()) {
-        if (now - worker.at > SIGHTING_TTL || busyWorkers.has(worker.host)) continue;
+        if (!fresh(worker, now) || busyWorkers.has(worker.host) || jobs.get(worker.host)?.kind === "stasis") continue;
         for (const neighbor of worker.neighbors) {
             const existing = workers.get(neighbor.host);
             if (existing && now - existing.at <= SIGHTING_TTL) continue;
@@ -20,7 +92,16 @@ export function assignJobs(workers, jobs, retryAt, now, nextId) {
     }
 }
 
-function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected) {
+function finishJob(ns, host, result, jobs, retryAt, routing) {
+    if (!result || jobs.get(result.target)?.id !== result.id) return;
+    const { kind } = jobs.get(result.target);
+    jobs.delete(result.target);
+    retryAt.set(result.target, Date.now() + RETRY_DELAY);
+    if (kind) routing.lastAction = { kind, host, target: result.target, status: result.status };
+    ns.print(`${host} → ${result.target}: ${result.status}`);
+}
+
+function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing) {
     while (!port.empty()) {
         const report = port.read();
         if (!report || typeof report.host !== "string") continue;
@@ -41,6 +122,10 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
             }
             continue;
         }
+        if (report.type === "route") {
+            if (report.offlineEpoch === offlineEpoch) finishJob(ns, report.host, report.result, jobs, retryAt, routing);
+            continue;
+        }
         if (report.type !== "heartbeat") continue;
         if (report.version !== WORKER_VERSION) {
             const oldWorker = ns.ps(report.host).find(script =>
@@ -52,16 +137,14 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
         if (report.offlineEpoch !== offlineEpoch) continue;
         if (report.at < (workers.get(report.host)?.at ?? 0)) continue;
         workers.set(report.host, report);
-        if (report.result) {
-            const { id, target, status } = report.result;
-            if (jobs.get(target)?.id === id) {
-                jobs.delete(target);
-                retryAt.set(target, Date.now() + RETRY_DELAY);
-                ns.print(`${report.host} → ${target}: ${status}`);
-            }
-        }
+        finishJob(ns, report.host, report.result, jobs, retryAt, routing);
         const incoming = jobs.get(report.host);
-        if (incoming && incoming.worker !== report.host) jobs.delete(report.host);
+        if (incoming && (!incoming.kind || incoming.kind === "recover") && incoming.worker !== report.host) {
+            if (incoming.kind === "recover") {
+                routing.lastAction = { kind: "recover", host: incoming.worker, target: report.host, status: "hub worker checked in" };
+            }
+            jobs.delete(report.host);
+        }
     }
 }
 
@@ -74,7 +157,7 @@ function publish(ns, port, jobPort, offlineEpoch, jobs) {
 export async function main(ns) {
     const options = ns.flags(FLAGS);
     if (options.help) {
-        ns.tprint("Run from home: run darknet-manager.js [--port 10150]");
+        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate]");
         return;
     }
     if (ns.getHostname() !== HOME) {
@@ -102,6 +185,11 @@ export async function main(ns) {
     const retryAt = new Map();
     let checkpointAt = 0;
     const collected = { files: 0, caches: 0, lastReward: null };
+    const routing = {
+        autoStasis: !options["no-stasis"], migrate: options.migrate,
+        hub: null, links: [], sessionVerified: false, nextLinkCheckAt: 0,
+        nextStasisAt: 0, nextMigrationAt: 0, lastAction: null,
+    };
 
     // Rejoin workers left running by an earlier manager on the same ports.
     const existing = ns.ps(HOME).find(script => script.filename.replace(/^\//, "") === WORKER &&
@@ -138,14 +226,17 @@ export async function main(ns) {
             if (!rootPid) ns.print("Waiting for enough home RAM to start the Darknet worker.");
         }
 
-        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected);
+        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing);
+        refreshLinks(ns, routing, now);
         for (const [target, job] of jobs) {
-            if (job.expires <= now || !ns.isRunning(job.pid)) jobs.delete(target);
+            if (job.expires <= now || (job.kind !== "stasis" && !ns.isRunning(job.pid))) jobs.delete(target);
         }
         for (const [target, until] of retryAt) {
             if (until <= now) retryAt.delete(target);
         }
-        assignJobs(workers, jobs, retryAt, now, () => `${offlineEpoch}/${++sequence}`);
+        const nextId = () => `${offlineEpoch}/${++sequence}`;
+        assignRoutes(workers, jobs, retryAt, routing, now, nextId);
+        assignJobs(workers, jobs, retryAt, now, nextId);
         publish(ns, assignments, jobPort, offlineEpoch, jobs);
 
         if (now >= checkpointAt) {
@@ -155,6 +246,8 @@ export async function main(ns) {
             ns.write(STATE_FILE, JSON.stringify({
                 version: WORKER_VERSION, at: now, reportPort, offlineEpoch, collected,
                 workers: snapshot, jobs: [...jobs.values()],
+                routing: { hub: routing.hub, links: routing.links, sessionVerified: routing.sessionVerified,
+                    migrationEnabled: routing.migrate, lastAction: routing.lastAction },
             }, null, 2), "w");
             checkpointAt = now + 5_000;
         }
