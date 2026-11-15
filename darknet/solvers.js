@@ -48,6 +48,17 @@ function singlePuzzleAnswer(details) {
             const answer = DESK_MEMO_HINT.exec(details.passwordHint)?.[1];
             return answer?.length === details.passwordLength ? answer : undefined;
         }
+        case "110100100": {
+            if (typeof details.data !== "string") return undefined;
+            const bytes = details.data.trim().split(/\s+/);
+            if (bytes.length !== details.passwordLength || !bytes.every(byte => /^[01]{8}$/.test(byte))) {
+                return undefined;
+            }
+            const answer = bytes.map(byte => String.fromCharCode(Number.parseInt(byte, 2))).join("");
+            if (!/^[0-9A-Za-z]+$/.test(answer)) return undefined;
+            const format = /^\d+$/.test(answer) ? "numeric" : /^[A-Za-z]+$/.test(answer) ? "alphabetic" : "alphanumeric";
+            return format === details.passwordFormat ? answer : undefined;
+        }
         case "CloudBlare(tm)":
         case "OctantVoxel": {
             if (typeof details.data !== "string" || details.passwordFormat !== "numeric") return undefined;
