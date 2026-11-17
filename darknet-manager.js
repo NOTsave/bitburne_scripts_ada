@@ -2,7 +2,7 @@ import { HOME, JOB_TTL, RETRY_DELAY, SIGHTING_TTL, WORKER, WORKER_VERSION } from
 import { puzzleAnswer } from "./darknet/solvers.js";
 
 const STATE_FILE = "data/darknet-state.txt";
-const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["phish", false], ["help", false]];
+const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["phish", false], ["phish-threads", 4], ["help", false]];
 const MIGRATION_INTERVAL = 60_000;
 
 function fresh(worker, now) {
@@ -194,7 +194,7 @@ function publish(ns, port, jobPort, offlineEpoch, jobs, idlePolicy) {
 export async function main(ns) {
     const options = ns.flags(FLAGS);
     if (options.help) {
-        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish]");
+        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish [--phish-threads 4]]");
         return;
     }
     if (ns.getHostname() !== HOME) {
@@ -224,7 +224,8 @@ export async function main(ns) {
     const collected = { files: 0, caches: 0, lastReward: null };
     const lab = { latest: null };
     const idle = { completed: 0, successes: 0, latest: null };
-    const idlePolicy = { phish: options.phish, migrationHub: null, labEnabled: !options["no-lab"] };
+    const phishThreads = Math.max(1, Math.min(4, Math.floor(options["phish-threads"] ?? 4)));
+    const idlePolicy = { phish: options.phish, phishThreads, migrationHub: null, labEnabled: !options["no-lab"] };
     const routing = {
         autoStasis: !options["no-stasis"], migrate: options.migrate,
         hub: null, links: [], sessionVerified: false, nextLinkCheckAt: 0,
@@ -293,7 +294,7 @@ export async function main(ns) {
                 version: WORKER_VERSION, at: now, reportPort, offlineEpoch, collected,
                 workers: snapshot, jobs: [...jobs.values()],
                 labyrinth: { enabled: !options["no-lab"], latest: lab.latest },
-                idleWork: { enabled: options.phish, ...idle },
+                idleWork: { enabled: options.phish, maxThreads: options.phish ? phishThreads : 0, ...idle },
                 routing: { hub: routing.hub, links: routing.links, sessionVerified: routing.sessionVerified,
                     migrationEnabled: routing.migrate, lastAction: routing.lastAction },
             }, null, 2), "w");

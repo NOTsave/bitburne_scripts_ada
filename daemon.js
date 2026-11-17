@@ -48,6 +48,7 @@ const argsSchema = [
 
     ['disable-script', []], // The names of scripts that you do not want run by our scheduler
     ['run-script', []], // The names of additional scripts that you want daemon to run on home
+    ['darknet-idle-threads', 1], // Spare-RAM idle threads per Darknet host, up to four. Zero disables idle work.
     ['darknet-min-home-ram', 64], // Minimum home RAM in GB before auto-starting Darknet.
     ['darknet-ram-headroom', 16], // Free home RAM to leave after budgeting for the manager and its first worker.
     ['darknet-warmup-ms', 300_000], // Time since the current BitNode began before auto-starting Darknet.
@@ -769,9 +770,12 @@ export async function main(ns) {
                 status = 'waiting for home RAM';
             else if (processList(ns, 'home', false).some(process => process.filename.replace(/^\//, '') === darknetManagerPath))
                 status = 'running on home';
-            else
-                status = ns.exec(darknetManagerPath, 'home', { threads: 1, preventDuplicates: true })
+            else {
+                const idleThreads = options['darknet-idle-threads'];
+                const managerArgs = idleThreads >= 1 ? ['--phish', '--phish-threads', idleThreads] : [];
+                status = ns.exec(darknetManagerPath, 'home', { threads: 1, preventDuplicates: true }, ...managerArgs)
                     ? 'started on home' : 'waiting to launch on home';
+            }
         }
 
         if (darknetStatus !== status && !(darknetStatus === 'started on home' && status === 'running on home'))

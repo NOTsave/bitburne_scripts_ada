@@ -82,9 +82,9 @@ function hostHasJob(plan, host) {
     return plan.jobs.some(job => job.expires > Date.now() && (job.worker === host || job.target === host));
 }
 
-export function idleThreadBudget(available, perThread, reserved) {
+export function idleThreadBudget(available, perThread, reserved, maxThreads = 4) {
     if (!(perThread > 0)) return 0;
-    return Math.max(0, Math.min(4, Math.floor((available - reserved) / perThread)));
+    return Math.max(0, Math.min(maxThreads, Math.floor((available - reserved) / perThread)));
 }
 
 async function maintainRewards(ns, host, reportPort, offlineEpoch, pending) {
@@ -206,7 +206,7 @@ export async function main(ns) {
                     assignment.migrationHub === host ? ns.getScriptRam(MIGRATION, host) : 0,
                     assignment.labEnabled && neighbors.some(neighbor => neighbor.lab) ? ns.getScriptRam(LAB, host) : 0,
                 );
-                const threads = idleThreadBudget(freeRam(ns, host), cost, reserved);
+                const threads = idleThreadBudget(freeRam(ns, host), cost, reserved, assignment.phishThreads);
                 if (threads > 0) {
                     const pid = ns.run(IDLE, { threads, preventDuplicates: true }, reportPort, offlineEpoch);
                     if (pid > 0) idleRun = { pid, threads, ram: threads * cost };
