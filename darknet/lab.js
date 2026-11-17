@@ -24,6 +24,13 @@ function nextMove(position, visited, blocked, trail) {
 /** @param {NS} ns */
 export async function main(ns) {
     const [reportPort, jobPort, offlineEpoch, id, target] = ns.args;
+    if (!Number.isSafeInteger(reportPort) || reportPort < 1 ||
+        !Number.isSafeInteger(jobPort) || jobPort < 1 || jobPort === reportPort ||
+        !Number.isSafeInteger(offlineEpoch) || typeof id !== "string" || !id ||
+        typeof target !== "string" || !target) {
+        ns.tprint("darknet/lab.js needs an assigned Labyrinth job. Start darknet-manager.js on home or let Daemon start it.");
+        return;
+    }
     const assignments = ns.getPortHandle(jobPort);
     const visited = new Set();
     const blocked = new Set();
