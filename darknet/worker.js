@@ -1,5 +1,10 @@
-import { BUNDLE, COLLECTOR, HOME, MIGRATION, REPORT_INTERVAL, STASIS, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
+import { BUNDLE, COLLECTOR, HOME, LAB, MIGRATION, REPORT_INTERVAL, STASIS, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
 import { isSupported, puzzleAnswer, puzzleCandidates } from "./solvers.js";
+
+const LAB_HOSTS = new Set([
+    "th3_l4byr1nth", "cru3l_l4byr1nth", "m3rc1l3ss_l4byr1nth", "ub3r_l4byr1nth",
+    "et3rn4l_l4byr1nth", "end13ss_l4byr1nth", "f1n4l_l4byr1nth", "b0nus_l4byr1nth",
+]);
 
 export function freeRam(ns, host) {
     return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
@@ -16,6 +21,7 @@ export function observeNeighbors(ns) {
                 model: details.modelId,
                 depth: details.depth,
                 supported: isSupported(details) || details.hasSession === true,
+                lab: LAB_HOSTS.has(host) && !ns.hasRootAccess(host),
             });
         } catch {
             // A neighbor can vanish between probe and getServerDetails.
@@ -104,12 +110,14 @@ export async function main(ns) {
                 const details = ns.dnet.getServerDetails(host);
                 const stasisRam = ns.getScriptRam(STASIS, host);
                 const migrateRam = ns.getScriptRam(MIGRATION, host);
+                const labRam = ns.getScriptRam(LAB, host);
                 const self = ns.self();
                 location = {
                     depth: details.depth,
                     movable: !details.isStationary,
                     canAnchor: stasisRam > 0 && puzzleAnswer(details) !== undefined && free + self.ramUsage * self.threads >= stasisRam,
                     canCharge: migrateRam > 0 && free >= migrateRam,
+                    canNavigate: labRam > 0 && free >= labRam,
                 };
             }
             sendReport(ns, reportPort, {
@@ -140,6 +148,13 @@ export async function main(ns) {
                             handoff = [reportPort, jobPort, offlineEpoch, WORKER_VERSION, job.id];
                         } else {
                             status = "waiting for stasis RAM";
+                        }
+                    } else if (job.kind === "lab") {
+                        const cost = ns.getScriptRam(LAB, host);
+                        const threads = cost > 0 ? Math.min(8, Math.floor(freeRam(ns, host) / cost)) : 0;
+                        if (!threads || !ns.run(LAB, { threads, preventDuplicates: true },
+                            reportPort, jobPort, offlineEpoch, job.id, job.target)) {
+                            status = "waiting for Labyrinth RAM";
                         }
                     } else if (job.kind === "migrate") {
                         const cost = ns.getScriptRam(MIGRATION, host);
