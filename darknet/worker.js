@@ -1,4 +1,4 @@
-import { BUNDLE, COLLECTOR, HOME, LAB, MIGRATION, REPORT_INTERVAL, STASIS, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
+import { BUNDLE, COLLECTOR, HOME, IDLE, LAB, MIGRATION, REPORT_INTERVAL, STASIS, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
 import { isSupported, puzzleAnswer, puzzleCandidates } from "./solvers.js";
 
 const LAB_HOSTS = new Set([
@@ -69,10 +69,25 @@ export async function deploy(ns, target, workerArgs, recover = false, deadline =
     return pid > 0 ? "worker launched" : "launch declined";
 }
 
-async function maintainRewards(ns, host, reportPort, offlineEpoch) {
-    const files = ns.ls(host);
-    const pending = files.filter(name => name.endsWith(".cache") ||
+function countCollectibles(ns, host) {
+    return ns.ls(host).filter(name => name.endsWith(".cache") ||
         (/\.(lit|txt)$/.test(name) && !ns.fileExists(name, HOME))).length;
+}
+
+function planIsFresh(plan, offlineEpoch) {
+    return plan?.offlineEpoch === offlineEpoch && Date.now() - plan.at < 2 * REPORT_INTERVAL;
+}
+
+function hostHasJob(plan, host) {
+    return plan.jobs.some(job => job.expires > Date.now() && (job.worker === host || job.target === host));
+}
+
+export function idleThreadBudget(available, perThread, reserved) {
+    if (!(perThread > 0)) return 0;
+    return Math.max(0, Math.min(4, Math.floor((available - reserved) / perThread)));
+}
+
+async function maintainRewards(ns, host, reportPort, offlineEpoch, pending) {
     const requiredRam = ns.getScriptRam(COLLECTOR, host);
     const blockedRam = ns.dnet.getBlockedRam(host);
     const args = [reportPort, offlineEpoch];
@@ -99,12 +114,24 @@ export async function main(ns) {
     let lastJob = "";
     let result;
     let rewards;
+    let idleRun = null;
+
+    function stopIdle() {
+        if (idleRun && (ns.kill(idleRun.pid) || !ns.isRunning(idleRun.pid))) idleRun = null;
+    }
 
     while (true) {
         let handoff;
         try {
             const neighbors = observeNeighbors(ns);
+            const plan = jobs.peek();
+            const fresh = planIsFresh(plan, offlineEpoch);
+            const pending = host !== HOME && fresh ? countCollectibles(ns, host) : 0;
+            if (idleRun && !ns.isRunning(idleRun.pid)) idleRun = null;
+            if (idleRun && (!fresh || !plan.phish || pending || hostHasJob(plan, host))) stopIdle();
+
             const free = freeRam(ns, host);
+            const availableForJobs = free + (idleRun?.ram ?? 0);
             let location;
             if (host !== HOME) {
                 const details = ns.dnet.getServerDetails(host);
@@ -115,27 +142,27 @@ export async function main(ns) {
                 location = {
                     depth: details.depth,
                     movable: !details.isStationary,
-                    canAnchor: stasisRam > 0 && puzzleAnswer(details) !== undefined && free + self.ramUsage * self.threads >= stasisRam,
-                    canCharge: migrateRam > 0 && free >= migrateRam,
-                    canNavigate: labRam > 0 && free >= labRam,
+                    canAnchor: stasisRam > 0 && puzzleAnswer(details) !== undefined && availableForJobs + self.ramUsage * self.threads >= stasisRam,
+                    canCharge: migrateRam > 0 && availableForJobs >= migrateRam,
+                    canNavigate: labRam > 0 && availableForJobs >= labRam,
                 };
             }
             sendReport(ns, reportPort, {
                 type: "heartbeat", version: WORKER_VERSION, offlineEpoch,
-                neighbors, free, result, rewards, location,
+                neighbors, free, result, rewards, location, idleThreads: idleRun?.threads ?? 0,
             });
 
-            const plan = jobs.peek();
-            if (host !== HOME && plan?.offlineEpoch === offlineEpoch &&
-                Date.now() - plan.at < 2 * REPORT_INTERVAL) {
+            if (host !== HOME && fresh) {
                 try {
-                    rewards = await maintainRewards(ns, host, reportPort, offlineEpoch);
+                    rewards = await maintainRewards(ns, host, reportPort, offlineEpoch, pending);
                 } catch (error) {
                     rewards = String(error);
                 }
             }
             const assignment = jobs.peek();
-            const job = assignment?.offlineEpoch === offlineEpoch && assignment.jobs.find(
+            const assignmentFresh = planIsFresh(assignment, offlineEpoch);
+            if (idleRun && (!assignmentFresh || !assignment.phish || hostHasJob(assignment, host))) stopIdle();
+            const job = assignmentFresh && assignment.jobs.find(
                 candidate => candidate.worker === host && candidate.pid === ns.pid && candidate.expires > Date.now(),
             );
             if (job && job.id !== lastJob) {
@@ -171,6 +198,19 @@ export async function main(ns) {
                     status = String(error);
                 }
                 if (status) result = { id: job.id, target: job.target, status };
+            } else if (host !== HOME && !idleRun && assignmentFresh && assignment.phish &&
+                rewards === "no collectibles" && !hostHasJob(assignment, host)) {
+                const cost = ns.getScriptRam(IDLE, host);
+                const reserved = Math.max(
+                    ns.getScriptRam(COLLECTOR, host),
+                    assignment.migrationHub === host ? ns.getScriptRam(MIGRATION, host) : 0,
+                    assignment.labEnabled && neighbors.some(neighbor => neighbor.lab) ? ns.getScriptRam(LAB, host) : 0,
+                );
+                const threads = idleThreadBudget(freeRam(ns, host), cost, reserved);
+                if (threads > 0) {
+                    const pid = ns.run(IDLE, { threads, preventDuplicates: true }, reportPort, offlineEpoch);
+                    if (pid > 0) idleRun = { pid, threads, ram: threads * cost };
+                }
             }
         } catch (error) {
             ns.print(String(error));

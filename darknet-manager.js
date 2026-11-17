@@ -2,7 +2,7 @@ import { HOME, JOB_TTL, RETRY_DELAY, SIGHTING_TTL, WORKER, WORKER_VERSION } from
 import { puzzleAnswer } from "./darknet/solvers.js";
 
 const STATE_FILE = "data/darknet-state.txt";
-const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["help", false]];
+const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["phish", false], ["help", false]];
 const MIGRATION_INTERVAL = 60_000;
 
 function fresh(worker, now) {
@@ -116,7 +116,7 @@ function finishJob(ns, host, result, jobs, retryAt, routing) {
     ns.print(`${host} → ${result.target}: ${result.status}`);
 }
 
-function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab) {
+function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle) {
     while (!port.empty()) {
         const report = port.read();
         if (!report || typeof report.host !== "string") continue;
@@ -134,6 +134,17 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
                 ns.print(`${report.host} collected ${JSON.stringify({
                     files: report.copied, caches: report.caches, errors: report.errors,
                 })}`);
+            }
+            continue;
+        }
+        if (report.type === "idle") {
+            if (report.offlineEpoch === offlineEpoch) {
+                idle.completed++;
+                if (report.success) idle.successes++;
+                if (!idle.latest || report.completedAt >= idle.latest.completedAt) {
+                    const { host, success, code, message, completedAt } = report;
+                    idle.latest = { host, success, code, message, completedAt };
+                }
             }
             continue;
         }
@@ -174,16 +185,16 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
     }
 }
 
-function publish(ns, port, jobPort, offlineEpoch, jobs) {
+function publish(ns, port, jobPort, offlineEpoch, jobs, idlePolicy) {
     port.clear();
-    ns.tryWritePort(jobPort, { offlineEpoch, at: Date.now(), jobs: [...jobs.values()] });
+    ns.tryWritePort(jobPort, { offlineEpoch, at: Date.now(), jobs: [...jobs.values()], ...idlePolicy });
 }
 
 /** @param {NS} ns */
 export async function main(ns) {
     const options = ns.flags(FLAGS);
     if (options.help) {
-        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab]");
+        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish]");
         return;
     }
     if (ns.getHostname() !== HOME) {
@@ -212,6 +223,8 @@ export async function main(ns) {
     let checkpointAt = 0;
     const collected = { files: 0, caches: 0, lastReward: null };
     const lab = { latest: null };
+    const idle = { completed: 0, successes: 0, latest: null };
+    const idlePolicy = { phish: options.phish, migrationHub: null, labEnabled: !options["no-lab"] };
     const routing = {
         autoStasis: !options["no-stasis"], migrate: options.migrate,
         hub: null, links: [], sessionVerified: false, nextLinkCheckAt: 0,
@@ -235,11 +248,14 @@ export async function main(ns) {
             collected.caches = saved.collected?.caches ?? 0;
             collected.lastReward = saved.collected?.lastReward ?? null;
             lab.latest = saved.labyrinth?.latest ?? null;
+            idle.completed = saved.idleWork?.completed ?? 0;
+            idle.successes = saved.idleWork?.successes ?? 0;
+            idle.latest = saved.idleWork?.latest ?? null;
         }
     } catch {
         // An absent or invalid snapshot is recoverable from fresh reports.
     }
-    publish(ns, assignments, jobPort, offlineEpoch, jobs);
+    publish(ns, assignments, jobPort, offlineEpoch, jobs, idlePolicy);
 
     ns.disableLog("sleep");
     while (!ns.fileExists("DarkscapeNavigator.exe", HOME)) {
@@ -254,7 +270,7 @@ export async function main(ns) {
             if (!rootPid) ns.print("Waiting for enough home RAM to start the Darknet worker.");
         }
 
-        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab);
+        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle);
         refreshLinks(ns, routing, now);
         for (const [target, job] of jobs) {
             if (job.expires <= now || (job.kind !== "stasis" && !ns.isRunning(job.pid))) jobs.delete(target);
@@ -266,16 +282,18 @@ export async function main(ns) {
         if (!options["no-lab"]) assignLab(workers, jobs, retryAt, now, nextId);
         assignRoutes(workers, jobs, retryAt, routing, now, nextId);
         assignJobs(workers, jobs, retryAt, now, nextId);
-        publish(ns, assignments, jobPort, offlineEpoch, jobs);
+        idlePolicy.migrationHub = routing.migrate ? routing.hub : null;
+        publish(ns, assignments, jobPort, offlineEpoch, jobs, idlePolicy);
 
         if (now >= checkpointAt) {
-            const snapshot = [...workers.values()].map(({ host, at, free, neighbors, rewards }) => ({
-                host, at, free, neighbors, rewards, stale: now - at > SIGHTING_TTL,
+            const snapshot = [...workers.values()].map(({ host, at, free, neighbors, rewards, idleThreads }) => ({
+                host, at, free, neighbors, rewards, idleThreads, stale: now - at > SIGHTING_TTL,
             }));
             ns.write(STATE_FILE, JSON.stringify({
                 version: WORKER_VERSION, at: now, reportPort, offlineEpoch, collected,
                 workers: snapshot, jobs: [...jobs.values()],
                 labyrinth: { enabled: !options["no-lab"], latest: lab.latest },
+                idleWork: { enabled: options.phish, ...idle },
                 routing: { hub: routing.hub, links: routing.links, sessionVerified: routing.sessionVerified,
                     migrationEnabled: routing.migrate, lastAction: routing.lastAction },
             }, null, 2), "w");
