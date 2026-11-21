@@ -11,6 +11,11 @@ function canonical(filename) {
     return filename.replace(/^\//, "");
 }
 
+function siblingScript(ns, name) {
+    const current = canonical(ns.getScriptName());
+    return current.slice(0, current.lastIndexOf("/") + 1) + name;
+}
+
 export function readCorporationSupervisorConfig(ns, overrides = {}) {
     const raw = ns.read(CONFIG_FILE);
     const saved = raw.trim() ? JSON.parse(raw) : {};
@@ -27,10 +32,14 @@ export function readCorporationSupervisorConfig(ns, overrides = {}) {
 }
 
 export function corporationRamPlan(ns, headroom = DEFAULT_CORP_HEADROOM) {
-    const measured = ns.getScriptRam(SCRIPT, "home");
-    const pid = ns.ps("home").find(process => canonical(process.filename) === SCRIPT)?.pid ?? 0;
+    const script = siblingScript(ns, SCRIPT);
+    const measured = ns.getScriptRam(script, "home");
+    // Every installation manages the same corporation and heartbeat on home.
+    const worker = ns.ps("home").find(process => process.filename.split("/").pop() === SCRIPT);
+    const pid = worker?.pid ?? 0;
     const target = measured > 0 ? measured + headroom : 0;
-    return { measured, pid, running: pid !== 0, target, reserved: pid && target ? headroom : target };
+    return { script, workerScript: worker && canonical(worker.filename), measured, pid, running: Boolean(worker?.args.includes("--apply")),
+        dryRun: Boolean(worker && !worker.args.includes("--apply")), target, reserved: pid && target ? headroom : target };
 }
 
 /** Create one launch controller for the lifetime of its supervisor. */
@@ -38,6 +47,8 @@ export function createCorporationSupervisor() {
     let nextAttemptAt = 0;
     return (ns, config) => {
         const plan = corporationRamPlan(ns, config.headroom);
+        if (plan.dryRun) return { ...plan, state: "dry-run" };
+        if (plan.running && plan.workerScript !== plan.script) return { ...plan, state: "other-installation" };
         if (plan.running) return { ...plan, state: "running" };
         if (!plan.target) return { ...plan, state: "missing-script" };
         const now = Date.now();
@@ -49,7 +60,7 @@ export function createCorporationSupervisor() {
         if (config.supply === "manual") args.push("--manual-supply");
         if (GROWTH_FLAGS[config.growth]) args.push(GROWTH_FLAGS[config.growth]);
         if (FUNDING_FLAGS[config.funding]) args.push(FUNDING_FLAGS[config.funding]);
-        const pid = ns.exec(SCRIPT, "home", 1, ...args);
+        const pid = ns.exec(plan.script, "home", 1, ...args);
         return { ...plan, pid, state: pid ? "launched" : "exec-failed", free, nextAttemptAt };
     };
 }
@@ -60,9 +71,11 @@ export async function runCorporationSupervisor(ns) {
         ns.tprint("[corp supervisor] Run on home.");
         return;
     }
+    const supervisor = siblingScript(ns, "corp-supervisor.js");
+    const daemon = siblingScript(ns, "daemon.js");
     const existing = ns.ps("home").some(process => process.pid < ns.pid &&
-        (canonical(process.filename) === "corp-supervisor.js" ||
-            (canonical(process.filename) === "daemon.js" && process.args.includes("--corp-only"))));
+        (canonical(process.filename) === supervisor ||
+            (canonical(process.filename) === daemon && process.args.includes("--corp-only"))));
     if (existing) {
         ns.tprint("[corp supervisor] Another launcher is already running.");
         return;
@@ -80,7 +93,7 @@ export async function runCorporationSupervisor(ns) {
     let lastState;
     for (;;) {
         const result = supervise(ns, config);
-        const message = "[" + result.state + "] corp.js " + result.measured.toFixed(2) + " GB, target " +
+        const message = "[" + result.state + "] " + (result.workerScript ?? result.script) + " " + result.measured.toFixed(2) + " GB, target " +
             result.target.toFixed(2) + " GB" + (result.pid ? ", PID " + result.pid : "") +
             (result.free === undefined ? "" : ", free " + result.free.toFixed(2) + " GB");
         if (message !== lastState) {

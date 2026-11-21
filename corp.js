@@ -175,8 +175,10 @@ export async function main(ns) {
     const pid = ns.pid;
     const filename = call("getScriptName", () => ns.getScriptName()).replace(/^\//, "");
     const processes = call("ps", () => ns.ps("home"));
-    if (processes.some(p => p.filename.replace(/^\//, "") === filename && p.pid < pid)) {
-        call("print", () => ns.print(prefix + "Another instance owns the heartbeat."));
+    if (processes.some(p => p.filename.split("/").pop() === filename.split("/").pop() && p.pid < pid)) {
+        const message = prefix + "Another instance owns the heartbeat.";
+        if (ns.args.includes("--once")) ns.tprint(message);
+        else ns.print(message);
         return;
     }
 
@@ -426,6 +428,10 @@ export async function main(ns) {
                 }
                 if (settled || (once && !apply && cycleFinished)) throw error;
             }
+        }
+        if (once && !apply && (!plan.nextState || plan.blocker)) {
+            call("tprint", () => ns.tprint(prefix + describe(plan)));
+            return;
         }
         if (cycleFinished) {
             lastReport = cycles;
