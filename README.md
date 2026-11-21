@@ -17,6 +17,12 @@ Routine updates preserve your player cash reserve in `reserve.txt`.
 - `run corp.js --once` inspects the corporation and prints a status report. If formation is blocked, it prints the reason and exits. For an operating corporation it normally observes one full market cycle.
 - `run corp-supervisor.js` starts continuous automation on `home` when there is enough free RAM for `corp.js` plus the configured headroom (32 GB by default). The supervisor waits for an existing dry run to finish. With the default `auto` preset, it uses BN3 seed funding when available and can spend $150b of player cash to form a corporation outside BN3.
 
+The daemon automatically manages the corporation in BN3 once home has at least 32 GB total RAM and ten minutes have elapsed since the BitNode reset. The worker also needs enough free RAM for its measured cost plus headroom. Use `--no-corp` to opt out, `--corp` to start immediately with BN3 or SF3 access, or `--corp-only` to launch the standalone supervisor on home. A default BN1 run reserves no corporation RAM.
+
+Both launch modes read `corp-supervisor.config.txt` on home. An invalid file prints a warning and loads defaults. `--corp-headroom 64` overrides the spare RAM in GB. `--corp-funding off|round1|chain|all` controls private investment offers. The default funding setting is off. The `preset` config field controls formation: `auto` uses seed money in BN3 and can self-fund elsewhere.
+
+The Corp row in `stats.js` displays revenue or stage, cycle count, and any blocker. It hides when the last heartbeat is over three minutes old.
+
 For a subfolder install, use the installed path, such as `run scripts/corp-supervisor.js`.
 
 # Running scripts
