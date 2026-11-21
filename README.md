@@ -3,7 +3,21 @@ Welcome to forked Insight's Bitburner scripts - one of the Bitburner scripts of 
 
 # Downloading the whole repository
 
-If you manually `nano git-pull.js` from the terminal and copy the [contents of that script](https://raw.githubusercontent.com/alainbryden/bitburner-scripts/main/git-pull.js), you should be able to run it once and download the rest of the files I use. Early-game, many will be useless because they are only enabled by late-game features, but they shouldn't give you too many problems just being there.
+From the Bitburner terminal on `home`, run:
+
+```text
+wget https://raw.githubusercontent.com/NOTsave/bitburne_scripts_ada/main/git-pull.js git-pull.js
+run git-pull.js
+```
+
+Routine updates preserve your player cash reserve in `reserve.txt`.
+
+## Corporation scripts
+
+- `run corp.js --once` inspects the corporation and prints a status report. If formation is blocked, it prints the reason and exits. For an operating corporation it normally observes one full market cycle.
+- `run corp-supervisor.js` starts continuous automation on `home` when there is enough free RAM for `corp.js` plus the configured headroom (32 GB by default). The supervisor waits for an existing dry run to finish. With the default `auto` preset, it uses BN3 seed funding when available and can spend $150b of player cash to form a corporation outside BN3.
+
+For a subfolder install, use the installed path, such as `run scripts/corp-supervisor.js`.
 
 # Running scripts
 

@@ -30,7 +30,10 @@ export async function main(ns) {
     options.subfolder = options.subfolder ? trimSlash(options.subfolder) : // Remove leading slash from any user-specified folder
         ns.getScriptName().substring(0, ns.getScriptName().lastIndexOf('/')); // Default to the current folder
     const baseUrl = `raw.githubusercontent.com/${options.github}/${options.repository}/${options.branch}/`;
-    const filesToDownload = options['new-file'].concat(options.download.length > 0 ? options.download : await repositoryListing(ns));
+    // reserve.js and autopilot own the live cash reserve. Only replace it on an explicit request.
+    const downloads = options.download.length ? options.download :
+        (await repositoryListing(ns)).filter(path => trimSlash(path) !== "reserve.txt");
+    const filesToDownload = options['new-file'].concat(downloads);
     for (const localFilePath of filesToDownload) {
         let fullLocalFilePath = pathJoin(options.subfolder, localFilePath);
         const remoteFilePath = `https://` + pathJoin(baseUrl, localFilePath);
@@ -100,7 +103,10 @@ async function repositoryListing(ns, folder = '') {
         ns.tprint(`WARNING: Failed to get a repository listing (GitHub API request limit of 60 reached?): ${listUrl}` +
             `\nResponse Contents (if available): ${JSON.stringify(response ?? '(N/A)')}\nError: ${String(error)}`);
         // Fallback, assume the user already has a copy of all files in the repo, and use it as a directory listing
-        return ns.ls('home').filter(name => options.extension.some(ext => name.endsWith(ext)) &&
-            !options['omit-folder'].some(dir => name.startsWith(dir)));
+        const prefix = options.subfolder ? trimSlash(options.subfolder) + "/" : "";
+        return ns.ls('home').map(trimSlash).filter(name => name.startsWith(prefix))
+            .map(name => name.slice(prefix.length))
+            .filter(name => options.extension.some(ext => name.endsWith(ext)) &&
+                !options['omit-folder'].some(dir => name.startsWith(dir)));
     }
 }
