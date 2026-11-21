@@ -11,18 +11,31 @@ function canonical(filename) {
     return filename.replace(/^\//, "");
 }
 
-function siblingScript(ns, name) {
+export function siblingScript(ns, name) {
     const current = canonical(ns.getScriptName());
     return current.slice(0, current.lastIndexOf("/") + 1) + name;
 }
 
+export function defaultCorporationSupervisorConfig() {
+    return { ...DEFAULTS };
+}
+
 export function readCorporationSupervisorConfig(ns, overrides = {}) {
-    const raw = ns.read(CONFIG_FILE);
-    const saved = raw.trim() ? JSON.parse(raw) : {};
+    let config = defaultCorporationSupervisorConfig();
+    try {
+        const raw = ns.read(CONFIG_FILE);
+        if (raw.trim()) config = validateConfig(JSON.parse(raw), config);
+    } catch (error) {
+        ns.tprint("[corp supervisor] WARNING: " + CONFIG_FILE + ": " + error.message + ". Using defaults.");
+    }
+    return validateConfig(overrides, config);
+}
+
+function validateConfig(saved, defaults) {
     if (!saved || typeof saved !== "object" || Array.isArray(saved)) {
         throw new Error(CONFIG_FILE + " must contain a JSON object");
     }
-    const config = { ...DEFAULTS, ...saved, ...overrides };
+    const config = { ...defaults, ...saved };
     if (!["auto", "bn3", "self-funded"].includes(config.preset) ||
         !Object.hasOwn(FUNDING_FLAGS, config.funding) || !Object.hasOwn(GROWTH_FLAGS, config.growth) ||
         !["auto", "manual"].includes(config.supply) || !Number.isFinite(config.headroom) || config.headroom < 0) {
@@ -34,8 +47,12 @@ export function readCorporationSupervisorConfig(ns, overrides = {}) {
 export function corporationRamPlan(ns, headroom = DEFAULT_CORP_HEADROOM) {
     const script = siblingScript(ns, SCRIPT);
     const measured = ns.getScriptRam(script, "home");
+    return planCorporationRam(script, measured, ns.ps("home"), headroom);
+}
+
+export function planCorporationRam(script, measured, processes, headroom) {
     // Every installation manages the same corporation and heartbeat on home.
-    const worker = ns.ps("home").find(process => process.filename.split("/").pop() === SCRIPT);
+    const worker = processes.find(process => process.filename.split("/").pop() === SCRIPT);
     const pid = worker?.pid ?? 0;
     const target = measured > 0 ? measured + headroom : 0;
     return { script, workerScript: worker && canonical(worker.filename), measured, pid, running: Boolean(worker?.args.includes("--apply")),
@@ -44,9 +61,14 @@ export function corporationRamPlan(ns, headroom = DEFAULT_CORP_HEADROOM) {
 
 /** Create one launch controller for the lifetime of its supervisor. */
 export function createCorporationSupervisor() {
+    const launch = createCorporationLauncher();
+    return (ns, config) => launch(ns, config, corporationRamPlan(ns, config.headroom),
+        () => ns.getServerMaxRam("home") - ns.getServerUsedRam("home"));
+}
+
+export function createCorporationLauncher() {
     let nextAttemptAt = 0;
-    return (ns, config) => {
-        const plan = corporationRamPlan(ns, config.headroom);
+    return (ns, config, plan, getFreeRam) => {
         if (plan.dryRun) return { ...plan, state: "dry-run" };
         if (plan.running && plan.workerScript !== plan.script) return { ...plan, state: "other-installation" };
         if (plan.running) return { ...plan, state: "running" };
@@ -54,7 +76,7 @@ export function createCorporationSupervisor() {
         const now = Date.now();
         if (now < nextAttemptAt) return { ...plan, state: "backoff", nextAttemptAt };
         nextAttemptAt = now + RETRY_MS;
-        const free = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+        const free = getFreeRam();
         if (free < plan.target) return { ...plan, state: "low-ram", free, nextAttemptAt };
         const args = ["--apply", "--preset", config.preset, "--ramp-office", "--office-care", "--products"];
         if (config.supply === "manual") args.push("--manual-supply");
@@ -66,16 +88,14 @@ export function createCorporationSupervisor() {
 }
 
 /** Run from the daemon's corporation-only mode or as an argument-free reset callback on home. */
-export async function runCorporationSupervisor(ns) {
+export async function runCorporationSupervisor(ns, overrides = {}) {
     if (ns.getHostname() !== "home") {
         ns.tprint("[corp supervisor] Run on home.");
         return;
     }
     const supervisor = siblingScript(ns, "corp-supervisor.js");
-    const daemon = siblingScript(ns, "daemon.js");
     const existing = ns.ps("home").some(process => process.pid < ns.pid &&
-        (canonical(process.filename) === supervisor ||
-            (canonical(process.filename) === daemon && process.args.includes("--corp-only"))));
+        canonical(process.filename) === supervisor);
     if (existing) {
         ns.tprint("[corp supervisor] Another launcher is already running.");
         return;
@@ -83,7 +103,7 @@ export async function runCorporationSupervisor(ns) {
 
     let config;
     try {
-        config = readCorporationSupervisorConfig(ns);
+        config = readCorporationSupervisorConfig(ns, overrides);
     } catch (error) {
         ns.tprint("[corp supervisor] " + error.message);
         return;
@@ -107,6 +127,19 @@ export async function runCorporationSupervisor(ns) {
 
 /** @param {NS} ns */
 export async function main(ns) {
-    await runCorporationSupervisor(ns);
+    const flags = ns.flags(corporationOptionSchema);
+    await runCorporationSupervisor(ns, corporationOverrides(flags));
+}
+
+export const corporationOptionSchema = [
+    ["corp-funding", "config"],
+    ["corp-headroom", -1],
+];
+
+export function corporationOverrides(options) {
+    const overrides = {};
+    if (options["corp-funding"] !== "config") overrides.funding = options["corp-funding"];
+    if (options["corp-headroom"] !== -1) overrides.headroom = options["corp-headroom"];
+    return overrides;
 }
 

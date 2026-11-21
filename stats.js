@@ -135,6 +135,8 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
         hudData.push(val)
     }
 
+    hudData.push(corporationHudRow(ns, bitNode, dictSourceFiles));
+
     // Show Hashes
     {
         const val1 = ["Hashes"];
@@ -322,6 +324,23 @@ async function getHudData(ns, bitNode, dictSourceFiles, options) {
     }
 
     return hudData
+}
+
+export function corporationHudRow(ns, bitNode, sourceFiles, now = Date.now()) {
+    const hidden = ["Corp", false];
+    if (bitNode !== 3 && !(sourceFiles[3] > 0)) return hidden;
+    let status;
+    try {
+        status = JSON.parse(ns.read("/Temp/corp-status.txt"));
+    } catch {
+        return hidden;
+    }
+    if (!Number.isFinite(status?.timestamp) || status.timestamp > now || now - status.timestamp > 180_000)
+        return hidden;
+    const value = Number.isFinite(status.revenue) ? formatMoney(status.revenue) + "/s" : status.stage;
+    if (!value) return hidden;
+    const details = [status.stage, status.blocker].filter(Boolean).join(" — ");
+    return ["Corp", true, [value, (status.cycles ?? 0) + " cycles", status.blocker].filter(Boolean).join(" · "), details];
 }
 
 /** @param {number} value

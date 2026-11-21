@@ -5,6 +5,8 @@ import {
     tryGetBitNodeMultipliers_Custom, getActiveSourceFiles_Custom,
     getFnRunViaNsExec, tail, autoRetry, getErrorInfo
 } from './helpers.js'
+import { corporationOptionSchema, corporationOverrides, readCorporationSupervisorConfig,
+    planCorporationRam, createCorporationLauncher, siblingScript } from './corp-supervisor.js';
 
 // daemon.js has histocially been the central orchestrator of almost every script in the game.
 // Only recently has it been "indentured" to an even higher-level orchestrator: autopilot.js
@@ -38,6 +40,10 @@ const argsSchema = [
     ['initial-study-time', 10], // Seconds. Set to 0 to not do any studying at startup. By default, if early in an augmentation, will start with a little study to boost hack XP
     ['initial-hack-xp-time', 10], // Seconds. Set to 0 to not do any hack-xp grinding at startup. By default, if early in an augmentation, will start with a little study to boost hack XP
 
+    ['corp', false], // Explicitly enable with corporation access. Default auto-starts only in BN3.
+    ['no-corp', false], // Disable automatic corporation management.
+    ['corp-only', false], // Start the standalone corporation supervisor on home and exit.
+    ...corporationOptionSchema,
     ['reserved-ram', 32], // Keep this much home RAM free when scheduling hack/grow/weaken cycles on home.
     ['double-reserve-threshold', 512], // in GB of RAM. Double our home RAM reserve once there is this much home max RAM.
 
@@ -87,9 +93,42 @@ export function autocomplete(data, args) {
     return [];
 }
 
+export function corporationEligible(options, node, sourceFiles, script) {
+    return !options['no-corp'] && !options['disable-script'].some(path => path.replace(/^\//, '') === script) &&
+        (node === 3 || (options.corp && sourceFiles[3] > 0));
+}
+
+export function shouldRunRamManager(singularity, improveHacking, corpTarget, homeRam) {
+    return singularity && (improveHacking || corpTarget > homeRam);
+}
+
+export function corporationBudget(ns, launch, config, script, measured, base, ready, getFreeRam) {
+    if (!config || !ready) return { target: 0, reserved: base };
+    const plan = planCorporationRam(script, measured, ns.ps('home'), config.headroom);
+    const result = launch && launch(ns, config, plan, getFreeRam);
+    const reserved = result?.state === 'launched' ? config.headroom : plan.reserved;
+    return { target: plan.target, reserved: base + reserved };
+}
+
+export function corporationReady(explicit, total, nodeStartedAt, now = Date.now()) {
+    return explicit || (total >= 32 && Number.isFinite(nodeStartedAt) && now - nodeStartedAt >= 600_000);
+}
+
 // script entry point
 /** @param {NS} ns **/
 export async function main(ns) {
+    const runOptions = getConfiguration(ns, argsSchema);
+    if (!runOptions) return;
+    if (runOptions['corp-only']) {
+        const args = [];
+        for (const [name, defaultValue] of corporationOptionSchema) {
+            if (runOptions[name] !== defaultValue) args.push("--" + name, runOptions[name]);
+        }
+        const supervisor = siblingScript(ns, 'corp-supervisor.js');
+        if (!ns.ps('home').some(p => p.filename.replace(/^\//, '') === supervisor) && !ns.exec(supervisor, 'home', 1, ...args))
+            ns.tprint("Could not start " + supervisor + " on home. Check available RAM and the script path.");
+        return;
+    }
     // --- CONSTANTS ---
     // track how costly (in security) a growth/hacking thread is.
     const growthThreadHardening = 0.004;
@@ -127,7 +166,19 @@ export async function main(ns) {
     let maxTargets = 0; // (Set in command line args) Initial value, will grow if there is an abundance of RAM
     let maxPreppingAtMaxTargets = 3; // The max servers we can prep when we're at our current max targets and have spare RAM
     // Allows some home ram to be reserved for ad-hoc terminal script running and when home is explicitly set as the "preferred server" for starting a helper
-    let homeReservedRam = 0; // (Set in command line args)
+    let homeReservedRam = 0;
+    let corpConfig, nodeStartedAt, corpWorkerRam = 0, corpTarget = 0;
+    const launchCorp = createCorporationLauncher();
+    const corpScript = siblingScript(ns, 'corp.js');
+
+    function refreshHomeReserve(launch = false) {
+        const total = homeServer?.totalRam(true) ?? 0;
+        const base = options['reserved-ram'] * (total >= options['double-reserve-threshold'] ? 2 : 1);
+        const budget = corporationBudget(ns, launch && launchCorp, corpConfig, corpScript, corpWorkerRam,
+            base, corporationReady(options.corp, total, nodeStartedAt), () => homeServer.ramAvailable(true));
+        homeReservedRam = budget.reserved;
+        corpTarget = budget.target;
+    }
 
     let allHostNames = (/**@returns {string[]}*/() => [])(); // simple name array of servers that have been discovered
     let _allServers = (/**@returns{Server[]}*/() => [])(); // Array of Server objects - our internal model of servers for hacking
@@ -259,8 +310,6 @@ export async function main(ns) {
     /** @param {NS} ns **/
     async function startup(ns) {
         daemonHost = "home"; // ns.getHostname(); // get the name of this node (realistically, will always be home)
-        const runOptions = getConfiguration(ns, argsSchema);
-        if (!runOptions) return;
 
         // Ensure no other copies of this script are running (they share memory)
         const scriptName = ns.getScriptName();
@@ -310,6 +359,15 @@ export async function main(ns) {
 
         // Process configuration
         options = runOptions;
+        nodeStartedAt = resetInfo.lastNodeReset;
+        corpConfig = null;
+        if (corporationEligible(options, bitNodeN, dictSourceFiles, corpScript)) {
+            try {
+                corpConfig = readCorporationSupervisorConfig(ns, corporationOverrides(options));
+            } catch (error) {
+                ns.tprint("Corporation management disabled: " + error.message);
+            }
+        }
         hackOnly = options.h || options['hack-only'];
         xpOnly = options.x || options['xp-only'];
         stockMode = (options.s || options['stock-manipulation'] || options['stock-manipulation-focus']) && !options['disable-stock-manipulation'];
@@ -322,7 +380,7 @@ export async function main(ns) {
         cycleTimingDelay = options['cycle-timing-delay'];
         queueDelay = options['queue-delay'];
         maxBatches = options['max-batches'];
-        homeReservedRam = options['reserved-ram']
+        homeReservedRam = options['reserved-ram'];
         maxTargets = options['initial-max-targets'] ?? 0;
         if (stockFocus) { // If the user explicitly requested to focus on stocks, ensure we start with as many targets as there are stock symbols
             maxTargets = Math.max(maxTargets, Object.keys(serverStockSymbols).length);
@@ -415,7 +473,7 @@ export async function main(ns) {
             { interval: 29000, name: "hacknet-upgrade-manager.js", shouldRun: shouldUpgradeHacknet, args: () => ["-c", "--max-payoff-time", "1E100h", "--max-spend", getPlayerMoney(ns) * 0.001] },
             {   // Spend about 50% of un-reserved cash on home RAM upgrades (permanent) when they become available
                 interval: 30000, name: "/Tasks/ram-manager.js", args: () => ['--budget', 0.5, '--reserve', reservedMoney(ns)],
-                shouldRun: () => 4 in dictSourceFiles && shouldImproveHacking() // Only trigger if hack income is important
+                shouldRun: () => shouldRunRamManager(4 in dictSourceFiles, shouldImproveHacking(), corpTarget, homeServer.totalRam(true))
             },
             {   // Periodically check for new faction invites and join if deemed useful to be in that faction. Also determines how many augs we could afford if we installed right now
                 interval: 31000, name: "faction-manager.js", args: ['--verbose', 'false'],
@@ -599,6 +657,7 @@ export async function main(ns) {
     /** Checks whether it's time for any scheduled tasks to run
      * @param {NS} ns */
     async function runPeriodicScripts(ns) {
+        refreshHomeReserve(true);
         let launched = 0;
         for (const script of periodicScripts) {
             // Only run this tool if it's been more than <task.interval> milliseconds since it was last run
@@ -1143,8 +1202,7 @@ export async function main(ns) {
         else
             dictServerProfitInfo = Object.fromEntries(JSON.parse(analyzeHackResult).map(s => [s.hostname, s]));
         // Double home reserved ram once we reach the configured threshold
-        if (homeServer && homeServer.totalRam(true) >= options['double-reserve-threshold'])
-            homeReservedRam = 2 * options['reserved-ram'];
+        if (homeServer) refreshHomeReserve();
 
         // Hack: Below concerns aren't related to "server data", but are things we also wish to refresh just once in a while
         // Determine whether we have purchased stock API accesses yet (affects reserving and attempts to manipulate stock markets)
@@ -2403,8 +2461,12 @@ export async function main(ns) {
         // Fix the file path for each tool if this script was cloned to a sub-directory
         allTools.forEach(script => script.name = getFilePath(script.name));
         // Get the cost (RAM) of each tool from the API
+        const paths = allTools.map(tool => tool.name);
+        if (corpConfig) paths.push(corpScript);
         let toolCosts = await getNsDataThroughFile(ns, `Object.fromEntries(ns.args.map(s => [s, ns.getScriptRam(s, 'home')]))`,
-            '/Temp/script-costs.txt', allTools.map(t => t.name));
+            '/Temp/script-costs.txt', paths);
+        corpWorkerRam = toolCosts[corpScript] ?? 0;
+        refreshHomeReserve();
         // Construct a Tool class instance for each configured item
         const toolsTyped = allTools.map(toolConfig => new Tool(toolConfig, toolCosts[toolConfig.name]));
         toolsByShortName = Object.fromEntries(toolsTyped.map(tool => [tool.shortName || hashToolDefinition(tool), tool]));
