@@ -5,6 +5,9 @@ import {
 } from './helpers.js'
 
 const argsSchema = [ // The set of all command line arguments
+    ['corp', false], // Relay explicit Corporation enablement to daemon; BN3 also auto-enables.
+    ['no-corp', false], // Preserve an explicit opt-out across daemon restarts.
+    ['disable-auto-install', false], // Hold augmentation installs without stopping supervision.
     ['next-bn', 0], // If we destroy the current BN, the next BN to start
     ['disable-auto-destroy-bn', false], // Set to true if you do not want to auto destroy this BN when done
     ['install-at-aug-count', 8], // Automatically install when we can afford this many new augmentations (with NF only counting as 1). Note: This number will automatically be increased by 1 for every level of SF11 you have (up to 3)
@@ -41,6 +44,12 @@ export function autocomplete(data, args) {
 /** The entire program is now wrapped in the main functino to avoid objects in
  * global shared memory surviving between multiple invocations of this script.
  * @param {NS} ns **/
+export function corporationDaemonArgs(args,options){
+    const result=[...args];
+    if(options['no-corp'])return result.filter(x=>x!=='--corp').concat(result.includes('--no-corp')?[]:['--no-corp']);
+    if(options.corp)return result.filter(x=>x!=='--no-corp').concat(result.includes('--corp')?[]:['--corp']);
+    return result;
+}
 export async function main(ns) {
     const persistentLog = "log.autopilot.txt";
     const factionManagerOutputFile = "/Temp/affordable-augs.txt"; // Temp file produced by faction manager with status information
@@ -542,8 +551,8 @@ export async function main(ns) {
             const strServerIncomeInfo = ns.read('/Temp/analyze-hack.txt');	// HACK: Steal this file that Daemon also relies on
             if (strServerIncomeInfo) {
                 const incomeByServer = JSON.parse(strServerIncomeInfo);
-                dictServerHackReqs ??= await getNsDataThroughFile(ns, 'Object.fromEntries(ns.args.map(server => [server, ns.getServerRequiredHackingLevel(server)]))',
-                    '/Temp/getServerRequiredHackingLevel-all.txt', incomeByServer.map(s => s.hostname));
+                dictServerHackReqs ??= await getNsDataThroughFile(ns, 'Object.fromEntries(ns.args.map(server => [server, (ns.getServer(server).requiredHackingSkill ?? Number.MAX_SAFE_INTEGER)]))',
+                    '/Temp/autopilot-getServerRequiredHackingLevel-all.txt', incomeByServer.map(s => s.hostname));
                 const [bestServer, gain] = incomeByServer.filter(s => dictServerHackReqs[s.hostname] <= player.skills.hacking)
                     .reduce(([bestServer, bestIncome], target) => target.gainRate > bestIncome ? [target.hostname, target.gainRate] : [bestServer, bestIncome], [null, -1]);
                 const spendHashesMultThreshold = options['spend-hashes-on-server-hacking-threshold'];
@@ -551,7 +560,7 @@ export async function main(ns) {
                 // The exception is that in BN9, despite high penalties, we're definitely meant to spend hashes to boost hack income
                 if (bestServer && (gain > spendHashesMultThreshold || resetInfo.currentNode == 9)) {
                     // Check whether we should be spending hashes to reduce minimum security
-                    const serverMinSecurity = await getNsDataThroughFile(ns, 'ns.getServerMinSecurityLevel(ns.args[0])', null, [bestServer]);
+                    const serverMinSecurity = await getNsDataThroughFile(ns, '(ns.getServer(ns.args[0]).minDifficulty ?? 1)', null, [bestServer]);
                     const shouldReduceMinSecurity = serverMinSecurity > 2; // Each purchase reduces by 2%. Can't go below 1, but not worth the cost to keep going below 2.
                     // If we were already spending hashes to boost a server, check to see if things have changed
                     if (existingSpendHashesProc) {
@@ -641,6 +650,8 @@ export async function main(ns) {
             if ((4 in unlockedSFs) && unlockedSFs[4] < 3)
                 daemonArgs.push('--reserved-ram', 32 * ((unlockedSFs[4] ?? 0) == 2 ? 4 : 16));
         }
+
+        daemonArgs=corporationDaemonArgs(daemonArgs,options);
 
         // Once stanek's gift is accepted, launch it once per reset before we launch daemon (Note: stanek's gift is auto-purchased by faction-manager.js on your first install)
         let stanekRunning = (13 in unlockedSFs) && findScript('stanek.js') !== undefined;
@@ -820,6 +831,7 @@ export async function main(ns) {
      * @param {NS} ns
      * @param {Player} player */
     async function maybeInstallAugmentations(ns, player) {
+        if(options['disable-auto-install'])return;
         if (!(4 in unlockedSFs))  // Cannot automate augmentations or installs without singularity
             return setStatus(ns, `No singularity access, so you're on your own. You should manually work for factions and install augmentations!`);
 

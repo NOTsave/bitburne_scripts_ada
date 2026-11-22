@@ -1,0 +1,169 @@
+{
+  "date": "2026-11-22",
+  "game": "Steam Bitburner v3.0.1 (3162fd2)",
+  "baseline": {
+    "repository": "NOTsave/bitburne_scripts_ada",
+    "branch": "feature/corporation-daemon-hud",
+    "commit": "e40234d7c435b7280c3947dce94d28ced3ea9ef6",
+    "liveHashes": {
+      "daemon.js": "6ba4d954",
+      "autopilot.js": "6e6b0563",
+      "helpers.js": "17704cad"
+    },
+    "migrationReport": "APIBreakInfo-3.0.0.txt",
+    "publicationCheckoutUsed": false
+  },
+  "localChecks": {
+    "testsPassed": 54,
+    "failed": 0,
+    "diffCheck": true
+  },
+  "installedHashes": {
+    "corp.js": "5c764103",
+    "corp-supervisor.js": "227830e6",
+    "daemon.js": "2119b225",
+    "autopilot.js": "79e48d14",
+    "helpers.js": "77b033dc"
+  },
+  "ramGB": {
+    "corp.js": 871.8,
+    "corp-supervisor.js": 4.35,
+    "daemon.js": 6.55,
+    "autopilot.js": 2.7,
+    "managerLaunchTarget": 903.8
+  },
+  "profile": {
+    "preset": "auto",
+    "headroom": 32,
+    "supply": "manual",
+    "growth": "campaign",
+    "funding": "chain",
+    "scaling": true,
+    "capital": "auto",
+    "launcher": "daemon"
+  },
+  "autopilotConfig": [
+    [
+      "corp",
+      true
+    ]
+  ],
+  "handoffs": [
+    {
+      "controllerPid": 53,
+      "workerPid": 43,
+      "event": "initial-attachment",
+      "timestamp": 1795316775137
+    },
+    {
+      "controllerPid": 11568,
+      "workerPid": 43,
+      "event": "controller-reattachment",
+      "timestamp": 1795317037314
+    },
+    {
+      "controllerPid": 14624,
+      "workerPid": 43,
+      "event": "Autopilot daemon replacement",
+      "timestamp": 1795317097123
+    },
+    {
+      "controllerPid": 14624,
+      "workerPid": 24948,
+      "event": "supervised manager restart",
+      "timestamp": 1795317309097
+    }
+  ],
+  "autopilotTest": {
+    "pid": 14601,
+    "flags": [
+      "--corp",
+      "--disable-auto-install",
+      "--disable-auto-destroy-bn",
+      "--disable-casino",
+      "--no-tail-windows"
+    ],
+    "startedDaemon": 14624,
+    "retainedManager": 43,
+    "errors": [],
+    "stoppedAfterCheck": true,
+    "temporaryHoldsRemoved": true
+  },
+  "callbackCheck": {
+    "script": "corp-supervisor.js",
+    "message": "Attached to full daemon PID 14624",
+    "retainedManager": 43,
+    "anotherWorkerLaunched": false
+  },
+  "audit": {
+    "settlements": 30,
+    "firstCycle": 16,
+    "lastCycle": 45,
+    "consecutive": true,
+    "managerPid": 24948,
+    "maxWriters": 1,
+    "polls": 260,
+    "allSteady": true,
+    "allBuffered": true,
+    "blockers": [],
+    "cashChange": 27729306.471237183,
+    "paidCare": 0,
+    "sharesUnchanged": true,
+    "controllerPids": [
+      14624
+    ],
+    "first": {
+      "timestamp": 1795317324977,
+      "funds": 23724890728.429787,
+      "revenue": 172600.1771141748,
+      "expenses": 61644.77510237662
+    },
+    "last": {
+      "timestamp": 1795317353975,
+      "funds": 23752620034.901024,
+      "revenue": 157326.56451141063,
+      "expenses": 61559.11362583293
+    }
+  },
+  "final": {
+    "daemonPid": 14624,
+    "managerPid": 24948,
+    "standaloneSupervisorRunning": false,
+    "autopilotRunning": false,
+    "stage": "STEADY",
+    "blocker": null,
+    "cycles": 154,
+    "funds": 23856590779.15498,
+    "revenue": 155240.91778860815,
+    "expenses": 60770.549353789735,
+    "numShares": 300000000,
+    "totalShares": 1500000000,
+    "dividendRate": 0,
+    "supplyStreak": 154,
+    "productRateEach": 0.6193958404749327,
+    "plantsBefore": 59.99999385901064,
+    "plantsAfter": 41.418118644762664,
+    "plantsTarget": 60,
+    "daemonErrors": []
+  },
+  "resetVerification": {
+    "currentNode": 3,
+    "lastAugReset": 1795284330242,
+    "lastNodeReset": 1794779647522,
+    "actualResetPerformed": false,
+    "observedJournalEvent": "controller-reattachment",
+    "realAugmentationReattachment": "Pending next natural install",
+    "journal": "corp-launcher-state.txt"
+  },
+  "reports": [
+    "/Temp/corp-p6-before-restart.txt",
+    "/Temp/corp-p6-autopilot.txt",
+    "/Temp/corp-p6-audit.txt",
+    "corp-launcher-state.txt"
+  ],
+  "limitations": [
+    "No augmentation or BitNode reset was induced; real augmentation reattachment remains a deferred acceptance item.",
+    "Legacy-writer and cross-installation conflict guards were fixture-tested; no competing legacy writer was introduced into the live company.",
+    "The first full-daemon run exposed a shared temporary-script filename warning; the final build isolates migrated queries."
+  ]
+}

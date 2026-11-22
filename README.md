@@ -19,11 +19,15 @@ Routine updates preserve your player cash reserve in `reserve.txt`.
 
 The daemon automatically manages the corporation in BN3 once home has at least 32 GB total RAM and ten minutes have elapsed since the BitNode reset. The worker also needs enough free RAM for its measured cost plus headroom. Use `--no-corp` to opt out, `--corp` to start immediately with BN3 or SF3 access, or `--corp-only` to launch the standalone supervisor on home. A default BN1 run reserves no corporation RAM.
 
-Both launch modes read `corp-supervisor.config.txt` on home. An invalid file prints a warning and loads defaults. `--corp-headroom 64` overrides the spare RAM in GB. `--corp-funding off|round1|chain|all` controls private investment offers. The default funding setting is off. The `preset` config field controls formation: `auto` uses seed money in BN3 and can self-fund elsewhere.
+Both launch modes read `corp-supervisor.config.txt` on home. An invalid profile stops standalone startup or disables Corporation supervision in full daemon; repair the profile before restarting. `--corp-headroom 64` overrides the spare RAM in GB. `--corp-funding off|round1|chain|all` controls private investment offers. The default funding setting is off. The `preset` config field controls formation: `auto` uses seed money in BN3 and can self-fund elsewhere.
 
 The Corp row in `stats.js` displays revenue or stage, cycle count, and any blocker. It hides when the last heartbeat is over three minutes old.
 
 For a subfolder install, use the installed path, such as `run scripts/corp-supervisor.js`.
+
+The current manager includes guarded production scaling and automatic public-capital policy. With `--apply`, it can take a zero-share IPO after Round 3 and sustained profitable, supplied operation. Dividends compound at 0%, with a configured 5% payout above $50b when healthy; optional new shares repair liquidity shortfalls. Use `--capital-off` (or supervisor `capital: "off"`) to hold automatic capital actions. The selected `launcher: "daemon"` callback attaches to the full daemon; `standalone` runs only the worker supervisor.
+
+See the [Corporation operator guide](corporation-automation-guide.md) and [design/verification notes](corporation-automation-design.md). Run the 54 local checks with `node --test tests/corp-funding.test.mjs tests/corp-reconciliation.test.mjs tests/corp-supervisor.test.mjs tests/corp-launcher.test.mjs`. Actual augmentation reattachment remains pending the next natural install.
 
 # Running scripts
 

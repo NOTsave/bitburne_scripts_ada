@@ -1,0 +1,207 @@
+{
+  "date": "2026-11-22",
+  "game": "Steam Bitburner v3.0.1 (3162fd2)",
+  "evidenceType": "Selected native audit and heartbeat fields read through the game terminal",
+  "fullAuditInGame": "/Temp/corp-scaling-audit.txt",
+  "sourceHashes": {
+    "algorithm": "FNV-1a over JavaScript UTF-16 code units",
+    "manager": "6b6693c2",
+    "supervisor": "ac0e9a85"
+  },
+  "managerRamGB": 871.8,
+  "headroomGB": 32,
+  "launchTargetGB": 903.8,
+  "localTests": {
+    "passed": 35,
+    "failed": 0
+  },
+  "profile": {
+    "preset": "auto",
+    "headroom": 32,
+    "supply": "manual",
+    "growth": "campaign",
+    "funding": "chain",
+    "scaling": true
+  },
+  "processes": [
+    {
+      "filename": "corp-supervisor.js",
+      "pid": 24
+    },
+    {
+      "filename": "corp.js",
+      "pid": 25,
+      "args": [
+        "--apply",
+        "--preset",
+        "auto",
+        "--ramp-office",
+        "--office-care",
+        "--products",
+        "--scale-production",
+        "--manual-supply",
+        "--tobacco-growth",
+        "--fund-chain"
+      ]
+    }
+  ],
+  "oldAuditCollected": false,
+  "baseline": {
+    "funds": 36609081981.25522,
+    "revenue": 0,
+    "expenses": 15713.328750001003,
+    "runningCorporationProcesses": 0,
+    "installedInternFix": false
+  },
+  "observedCapitalActions": [
+    {
+      "name": "Office",
+      "division": "Agri",
+      "city": "Aevum",
+      "fromSize": 9,
+      "size": 12,
+      "cost": 5180116000.000005
+    },
+    {
+      "name": "Office",
+      "division": "Tobacco",
+      "city": "Sector-12",
+      "fromSize": 9,
+      "size": 12,
+      "cost": 5180116000.000005
+    }
+  ],
+  "finalAudit": {
+    "start": {
+      "timestamp": 1795314972897,
+      "funds": 26777219270.679356,
+      "revenue": 143197.08982925545,
+      "expenses": 55088.22379285741,
+      "numShares": 300000000,
+      "totalShares": 1500000000,
+      "public": false,
+      "round": 4
+    },
+    "end": {
+      "timestamp": 1795315001786,
+      "funds": 26802701424.382797,
+      "revenue": 142803.20852000237,
+      "expenses": 54541.070606158544,
+      "numShares": 300000000,
+      "totalShares": 1500000000,
+      "public": false,
+      "round": 4,
+      "offices": [
+        {
+          "division": "Agri",
+          "city": "Sector-12",
+          "size": 9,
+          "employees": 9,
+          "energy": 94.6810648309027,
+          "morale": 95.41300617939146
+        },
+        {
+          "division": "Agri",
+          "city": "Aevum",
+          "size": 12,
+          "employees": 12,
+          "energy": 100,
+          "morale": 100
+        },
+        {
+          "division": "Tobacco",
+          "city": "Sector-12",
+          "size": 12,
+          "employees": 12,
+          "energy": 100,
+          "morale": 100
+        }
+      ]
+    },
+    "summary": {
+      "settlements": 30,
+      "firstCycle": 22,
+      "lastCycle": 51,
+      "maximumConsecutiveBufferedCycles": 51,
+      "cashChange": 25482153.70344162,
+      "bufferedSettlements": 30,
+      "allLiveProductsProducing": true,
+      "maxCareSpent": 0,
+      "maxTeas": 0,
+      "blockers": [],
+      "holdingsUnchanged": true,
+      "roundUnchanged": true,
+      "endingMaximumWarehouseFill": 0.44007799666778025
+    }
+  },
+  "subsequentHeartbeat": {
+    "pid": 25,
+    "cycles": 62,
+    "funds": 26812345152.789257,
+    "revenue": 142102.89664650013,
+    "expenses": 54510.724682026346,
+    "blocker": null,
+    "supplyStreak": 62,
+    "demandStreak": 0,
+    "scalingBudget": 4907777659.377583,
+    "reserve": 5000000000,
+    "replacementReserve": 2181234515.278926,
+    "scalingBlocker": "Health, capacity, sell-through or quoted cost holds scaling",
+    "careSpent": 0,
+    "teasBought": 0,
+    "plants": {
+      "before": 59.99999359393254,
+      "after": 41.663800415515034,
+      "target": 60,
+      "ordered": 0,
+      "lastImport": 18.33609
+    },
+    "products": [
+      {
+        "name": "Tobacco-1795127254884",
+        "progress": 100,
+        "produced": 0.6112064392805836,
+        "sold": 0.6112064392805836
+      },
+      {
+        "name": "Tobacco-1795213400817",
+        "progress": 100,
+        "produced": 0.6112064392805836,
+        "sold": 0.6112064392805836
+      },
+      {
+        "name": "Tobacco-1795214057616",
+        "progress": 100,
+        "produced": 0.6112064392805836,
+        "sold": 0.6112064392805836
+      }
+    ],
+    "researchBanks": [
+      {
+        "division": "Agri",
+        "points": 5117.3873376510055,
+        "reserve": 10000,
+        "totalCost": 75000,
+        "gap": 79882.612662349,
+        "gainedPerSettlement": 0.6907461977352796,
+        "settlementsToTA": 115647,
+        "ready": false
+      },
+      {
+        "division": "Tobacco",
+        "points": 2474.496889995263,
+        "reserve": 10000,
+        "totalCost": 75000,
+        "gap": 82525.50311000473,
+        "gainedPerSettlement": 0.40344560186531453,
+        "settlementsToTA": 204552,
+        "ready": false
+      }
+    ]
+  },
+  "limitations": [
+    "TA activation verified in fixtures; live research continues normally below the 85000-point chain-plus-reserve threshold.",
+    "Warehouse pressure mutation is covered by the earlier November 19 native low-threshold test, not forced again during this underutilized P4 run.",
+    "The older 100-cycle upkeep report was absent on the currently opened save."
+  ]
+}

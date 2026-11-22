@@ -10,7 +10,8 @@ const CONFIG = {
     reserveBurnDays: 3,
     preservationRecoverySettlements: 3,
     preservationRecoveryBuffer: 1.1,
-    market: { dividendRate: 0, maximumDividendRate: 0.10, profitSettlements: 3,
+    market: { automatic: true, privateFundingRounds: 3, ipoSettlements: 12,
+        dividendRate: 0, payoutRate: 0.05, payoutCashThreshold: 50e9, maximumDividendRate: 0.10, profitSettlements: 3,
         minimumSharePrice: 1, minimumCeoStake: 0.05, equityCashTarget: 0 },
     liquidation: { allow: [], protect: [] },
     heartbeatPath: "/Temp/corp-status.txt",
@@ -42,7 +43,6 @@ const CONFIG = {
         weakSettlements: 3,
         inputBufferCycles: 2,
         exportPlants: true,
-        exportUnlockAfterRound: 4,
         exportSaleShare: 0.5,
         exportStockTolerance: 2e-5,
     },
@@ -69,32 +69,27 @@ const CONFIG = {
         { package: "Aevum Agriculture satellite", cost: 18.25e9 },
         { package: "Tobacco launch", cost: 35e9 },
         {
-            package: "Proven Tobacco capacity and sales",
+            package: "Export, demand, boosts and research",
             allocations: {
-                "Constrained warehouses and productive offices": 10e9,
-                "Demand and sales improvements": 8e9,
-                "Production boosts": 8e9,
-                "Research staffing and support": 6e9,
-                "Next product design and marketing": 10e9,
-                "Inputs and working cash": 6e9,
+                "Export": 20e9,
+                "Wilson Analytics": 8.5e9,
+                "AdVert": 1.5e9,
+                "Agriculture boosts": 1e9,
+                "Project Insight": 5e9,
             },
         },
-        {
-            package: "Sustained capacity and product replacement",
-            allocations: {
-                "Constrained warehouses and productive offices": 16e9,
-                "Demand and sales improvements": 12e9,
-                "Production boosts and upgrades": 10e9,
-                "Research staffing and support": 8e9,
-                "Replacement product design and marketing": 10e9,
-                "Inputs and working cash": 6e9,
-            },
-        },
+        // Set a cost or allocations once the post-Round-3 business has settled.
+        { package: "Round 4 review", pendingCalibration: true, allocations: {} },
     ],
     upgradeBudgetFraction: 0.10,
     upgradeSellThrough: 0.95,
     wilsonMinAdVerts: 5,
+    scaling: { privateOfficeCeiling: 9, postRound3OfficeCeiling: 12, publicOfficeCeiling: 18,
+        officeStep: 3, cashFraction: 0.25, stableSettlements: 12, inputMargin: 0.25,
+        minimumHealth: 90, maximumOfficeFill: 0.60, boostTotalProfitShare: 0.80 },
     officeCareBudget: 150e6,
+    officeCareProfitShare: 0.10,
+    officeInterns: { enabled: true, recoverBelow: 85, recoverTo: 95 },
     officeCareTarget: 95,
     officeCareTrigger: 85,
     starterProductionUnits: 20,
@@ -111,6 +106,7 @@ const CONFIG = {
     boosts: true,
     boostPurchaseBudget: 1e6,
     boostProfitSharePerCity: 0.25,
+    postRound3BoostProfitSharePerCity: 0.40,
     boostedInputBufferCycles: 2,
     agricultureBufferCashThreshold: 10e9,
     agricultureHighCashInputCycles: 3,
@@ -151,14 +147,21 @@ export async function main(ns) {
     const fundAll = ns.args.includes("--fund");
     const fundRound1 = ns.args.includes("--fund-round-1");
     const fundChain = ns.args.includes("--fund-chain");
+    const fundingMode = { fundAll, fundRound1, fundChain };
     const tobaccoGrowth = ns.args.includes("--tobacco-growth");
     const upgrades = ns.args.includes("--upgrades");
     const officeCare = ns.args.includes("--office-care");
     const manualSupply = ns.args.includes("--manual-supply");
     const products = ns.args.includes("--products");
     const productTA = ns.args.includes("--product-ta");
+    const scaling = ns.args.includes("--scale-production");
     const roundOneAtCost = ns.args.includes("--round-1-at-cost");
-    const readPlan = readyRound => inspect(ns, call, readyRound, products || !apply, preset);
+    const automaticCapital = CONFIG.market.automatic && !ns.args.includes("--capital-off");
+    const readPlan = readyRound => {
+        const plan = inspect(ns, call, readyRound, products || !apply, preset);
+        return automaticCapital && plan.stage === "GROW" && plan.round > CONFIG.market.privateFundingRounds
+            ? { ...plan, stage: "IPO", actions: ["Prepare guarded IPO; deliberately end private funding after Round " + CONFIG.market.privateFundingRounds] } : plan;
+    };
     const ipoEarly = ns.args.includes("--ipo-early");
     const ipo = ipoEarly || ns.args.includes("--ipo");
     const equity = ns.args.includes("--equity");
@@ -175,13 +178,15 @@ export async function main(ns) {
     const pid = ns.pid;
     const filename = call("getScriptName", () => ns.getScriptName()).replace(/^\//, "");
     const processes = call("ps", () => ns.ps("home"));
-    if (processes.some(p => p.filename.split("/").pop() === filename.split("/").pop() && p.pid < pid)) {
-        const message = prefix + "Another instance owns the heartbeat.";
-        if (ns.args.includes("--once")) ns.tprint(message);
-        else ns.print(message);
+    if (processes.some(p => p.filename.split("/").pop() === "corp.js" && p.pid < pid)) {
+        call("print", () => ns.print(prefix + "Another instance owns the heartbeat."));
         return;
     }
 
+    if (processes.some(p => p.pid !== pid && (p.filename.split("/").pop() === "corp-manager.js" || /(^|\/)Corp\/corp-[^/]+\.js$/i.test(p.filename)))) {
+        call("print", () => ns.print(prefix + "A legacy Corporation controller is running; refusing a second writer."));
+        return;
+    }
     const once = ns.args.includes("--once");
     const cycleArg = ns.args.indexOf("--cycles");
     const cycleLimit = cycleArg < 0 ? 0 : Number(ns.args[cycleArg + 1]);
@@ -195,7 +200,8 @@ export async function main(ns) {
         call("tprint", () => ns.tprint(prefix + "Use --dividend-rate from 0 to " + CONFIG.market.maximumDividendRate + "."));
         return;
     }
-    const financeOptions = { ipo, ipoEarly, equity, dividendRate };
+    const financeOptions = { automatic: automaticCapital, ipo: ipo || automaticCapital, ipoEarly,
+        equity: equity || automaticCapital, dividendRate, explicitDividend: dividendIndex >= 0, supplyStreak: 0 };
     let observed = [];
     let completedPhase = null;
     let cycles = 0;
@@ -210,14 +216,17 @@ export async function main(ns) {
     let development = null;
     let preservation = { active: false, healthy: 0 };
     let financeResult = null;
+    const financeResults = [];
     let liquidationStatus = null;
     const weakProducts = new Map();
     const productPriceStreaks = new Map();
-    const managedOrders = apply ? createPurchaseOrders(ns, filename + ".orders.txt") : null;
     const supplyReadiness = new Map();
+    let purchaseRecoveryPending = apply;
     if (apply) {
-        call("atExit", () => ns.atExit(managedOrders.clear));
-        managedOrders.clear();
+        call("atExit", () => ns.atExit(() => {
+            const cleanup = reconcileManagedPurchases(ns, call);
+            for (const error of cleanup.errors) call("print", () => ns.print(prefix + error));
+        }));
     }
     let lastSettlement = null;
     let settlementCount = 0;
@@ -229,17 +238,30 @@ export async function main(ns) {
     const recoveringOffices = new Set();
     let careSpent = 0;
     let teasBought = 0;
+    let careSinceSettlement = 0;
+    let officeCareStatus = null;
     let carePending = false;
     let valuationWindow = [];
     let funding = null;
     const fundingResults = [];
+    const round3Deployments = [];
     let upgradePlan = null;
     let upgradeResult = null;
+    let warehousePressure = [];
+    let scalingStatus = null;
+    let researchBanks = [];
+    let supplyStreak = 0;
+    let demandStreak = 0;
 
     for (;;) {
         let plan;
         let settled = null;
         try {
+            if (purchaseRecoveryPending) {
+                const recovery = reconcileManagedPurchases(ns, call);
+                if (recovery.errors.length) throw new Error("Purchase recovery: " + recovery.errors.join("; "));
+                purchaseRecoveryPending = false;
+            }
             plan = readPlan(funding?.ready ? funding.round : null);
             preservation = updatePreservation(plan, preservation, completedPhase === "START" && plan.nextState === "PURCHASE");
             if (preservation.active || liquidate) {
@@ -298,19 +320,33 @@ export async function main(ns) {
                 }
                 carePending = false;
                 funding = fundingDecision(plan, valuationWindow, profitStreak, rampProfitStreak, growth, fundChain);
+                funding.acceptanceEnabled = fundingAuthorized(funding.round, fundingMode);
                 development = readDevelopment(ns, call, plan.divisions, development, Boolean(fullInterval),
                     plan.secondsPerMarketCycle);
                 upgradePlan = growth && (!apply || upgrades || tobaccoGrowth)
                     ? rankUpgrades(ns, call, plan, growth, profitStreak, tobaccoGrowth, !apply || upgrades) : null;
                 lastSettlement = { number: ++settlementCount, fullCycles: cycles, revenue: plan.revenue, expenses: plan.expenses,
                     funds: plan.funds, fundsChange, operatingFundsChange, profitStreak, ramped, rampProfitStreak, fundingReady: funding.ready,
-                    materialPurchases, production, productInputs, agricultureInputs, treasury: plan.treasury, development,
+                    materialPurchases, production, productInputs, agricultureInputs, treasury: plan.treasury, development, officeCareSpend: careSinceSettlement,
                     office: office ? { jobs: office.office.employeeJobs, energy: office.office.avgEnergy,
                         morale: office.office.avgMorale } : null };
+                careSinceSettlement = 0;
+                if (scaling || automaticCapital) {
+                    const healthySupply = fullInterval && supplySampleHealthy(lastSettlement);
+                    supplyStreak = healthySupply ? supplyStreak + 1 : 0;
+                    const backlog = growth?.sites.some(site => !site.agriculture && site.outputs.some(output =>
+                        output.productionAmount > 0 && output.stored > output.productionAmount * plan.secondsPerMarketCycle * 2 &&
+                        output.actualSellAmount < output.productionAmount * CONFIG.upgradeSellThrough));
+                    demandStreak = fullInterval && backlog ? demandStreak + 1 : 0;
+                }
                 materialPurchases = null;
                 production = null;
                 productInputs = null;
                 agricultureInputs = [];
+                if (scaling && !apply && !plan.blocker && plan.nextState === "PURCHASE") {
+                    researchBanks = reconcileResearchBanks(ns, call, false, researchBanks);
+                    scalingStatus = planProductionScaling(ns, call, plan, { supplyStreak, demandStreak, profitStreak });
+                }
                 const summary = prefix + formatSettlement(lastSettlement) + formatFunding(funding);
                 call("print", () => ns.print(summary));
                 if (cycleLimit) {
@@ -319,12 +355,17 @@ export async function main(ns) {
                     if (readings) call("tprint", () => ns.tprint(prefix + readings));
                 }
             }
+            financeOptions.supplyStreak = supplyStreak;
             if (apply && plan.stage === "PRESERVE") {
                 const result = reconcilePublicFinances(ns, call, plan, financeOptions, profitStreak,
                     completedPhase === "START", true);
-                if (result) financeResult = result;
-                maintainEmergencySales(ns, call, plan, managedOrders);
-                if (liquidate && completedPhase === "START" && plan.nextState === "PURCHASE") {
+                if (result) {
+                    financeResult = result; financeResults.push(result);
+                    if (result.funds > 0 && lastSettlement) lastSettlement.fundsAfterFunding =
+                        call("getCorporation", () => ns.corporation.getCorporation()).funds;
+                }
+                maintainEmergencySales(ns, call, plan);
+                if ((liquidate || (automaticCapital && CONFIG.liquidation.allow.length > 0)) && completedPhase === "START" && plan.nextState === "PURCHASE") {
                     liquidationStatus = reconcileLiquidation(ns, call);
                 }
             } else if (apply && plan.stage !== null) {
@@ -332,38 +373,72 @@ export async function main(ns) {
                     completedPhase === "START", false);
                 const financed = Boolean(result);
                 if (financed) {
-                    financeResult = result;
+                    financeResult = result; financeResults.push(result);
+                    if (result.funds > 0 && lastSettlement) lastSettlement.fundsAfterFunding =
+                        call("getCorporation", () => ns.corporation.getCorporation()).funds;
+                    call("tprint", () => ns.tprint(prefix + "Verified capital action: " + JSON.stringify(result)));
                     plan = readPlan(null);
                 }
-                let funded = false;
+                const fundingReceipt = !financed && completedPhase === "START"
+                    ? acceptPlannedFunding(ns, call, plan, funding, fundingMode) : null;
+                const funded = Boolean(fundingReceipt);
                 let upgraded = false;
-                if (!financed && completedPhase === "START" && !plan.cashExpansion && funding?.ready && (fundAll || (fundRound1 && funding.round === 1) || (fundChain && funding.round <= 2))) {
-                    const result = acceptFunding(ns, call, funding, fundChain);
-                    fundingResults.push(result);
-                    lastSettlement.fundsAfterFunding = result.after.funds;
-                    funded = true;
+                let packagePending = false;
+                if (fundingReceipt) {
+                    fundingResults.push(fundingReceipt);
+                    lastSettlement.fundsAfterFunding = fundingReceipt.after.funds;
                     funding = null;
                     valuationWindow = [];
                     upgradePlan = null;
-                    call("tprint", () => ns.tprint(prefix + "Verified round " + result.round +
-                        ": +$" + result.funds.toFixed(0) + ", " + result.shares + " shares transferred, next round " +
-                        result.nextRound + "."));
+                    call("tprint", () => ns.tprint(prefix + "Verified round " + fundingReceipt.round +
+                        ": +$" + fundingReceipt.funds.toFixed(0) + ", " + fundingReceipt.shares + " shares transferred, next round " +
+                        fundingReceipt.nextRound + "."));
                     plan = readPlan(null);
                 }
                 const stopping = cycleLimit ? settlementCount >= cycleLimit : once && cycles > 0 && completedPhase === "START";
                 settled = stopping ? readSettlement(ns, call, Boolean(cycleLimit)) : null;
                 if (settled) {
-                    finishBootstrapOrders(ns, call, managedOrders, settled);
+                    finishBootstrapOrders(ns, call, settled);
                 } else if (!(cycleLimit && settlementCount >= cycleLimit)) {
-                    if (!financed && !funded && (upgrades || tobaccoGrowth) && completedPhase === "START" && upgradePlan?.selected) {
+                    if (!financed && !funded && products && (fundChain || fundAll) &&
+                        completedPhase === "START" && plan.round >= 4 && !plan.blocker) {
+                        packagePending = Boolean(planRound3Package(ns, call, plan));
+                        const deployment = deployRound3Package(ns, call, plan);
+                        if (deployment) {
+                            round3Deployments.push(deployment);
+                            upgraded = true;
+                            valuationWindow = [];
+                            funding = null;
+                            plan = readPlan(null);
+                            call("tprint", () => ns.tprint(prefix + "Round 3 package: " + deployment.name +
+                                " for $" + deployment.cost.toFixed(0) + "."));
+                        }
+                    }
+                    if (scaling && completedPhase === "START" && plan.nextState === "PURCHASE" && !plan.blocker) {
+                        researchBanks = reconcileResearchBanks(ns, call, true, researchBanks);
+                        scalingStatus = planProductionScaling(ns, call, plan, { supplyStreak, demandStreak, profitStreak });
+                        if (!financed && !funded && !upgraded && !packagePending && scalingStatus.selected) {
+                            upgradeResult = deployProductionScaling(ns, call, plan, scalingStatus.selected);
+                            upgraded = Boolean(upgradeResult);
+                            if (upgraded) {
+                                supplyStreak = 0;
+                                demandStreak = 0;
+                                supplyReadiness.clear();
+                                plan = readPlan(funding?.ready ? funding.round : null);
+                            }
+                        }
+                    }
+                    if (!financed && !funded && !upgraded && !packagePending && (upgrades || tobaccoGrowth) && completedPhase === "START" && upgradePlan?.selected) {
                         upgradeResult = buyRankedUpgrade(ns, call, upgradePlan.selected);
                         upgraded = Boolean(upgradeResult);
                         if (upgraded) plan = readPlan(funding?.ready ? funding.round : null);
                     }
                     if (officeCare && settlementCount >= 2 && plan.nextState === "START" && !plan.blocker) {
                         const care = careForManagedOffices(ns, call, plan, recoveringOffices, products);
+                        officeCareStatus = care;
                         if (care.spent > 0) {
                             careSpent += care.spent;
+                            careSinceSettlement += care.spent;
                             teasBought += care.teas;
                             carePending = care.recovering;
                             if (carePending) {
@@ -375,7 +450,11 @@ export async function main(ns) {
                                 " (" + care.teas + " tea orders, parties $" + care.party.toFixed(0) + ")."));
                         }
                     }
-                    if (applyBootstrap(ns, call, managedOrders, plan, ramp, profitStreak >= 2, manualSupply, supplyReadiness, completedPhase, products, preset)) {
+                    if (plan.nextState === "START") {
+                        warehousePressure = reconcileWarehousePressure(ns, call, plan, products);
+                        if (warehousePressure.some(site => site.upgraded)) plan = readPlan(funding?.ready ? funding.round : null);
+                    }
+                    if (applyBootstrap(ns, call, plan, ramp, profitStreak >= 2, manualSupply, supplyReadiness, completedPhase, products, preset)) {
                         plan = readPlan(funding?.ready ? funding.round : null);
                     }
                     if (researchTA && completedPhase === "START" && !plan.blocker) {
@@ -391,8 +470,8 @@ export async function main(ns) {
                         }
                     }
                     if (products) {
-                        productStatus = reconcileExpansion(ns, call, plan, completedPhase, productTA, weakProducts, managedOrders,
-                            !financed && !funded && !upgraded, productStatus, supplyReadiness, manualSupply, profitStreak >= 2,
+                        productStatus = reconcileExpansion(ns, call, plan, completedPhase, productTA, weakProducts,
+                            !financed && !funded && !upgraded && !packagePending, productStatus, supplyReadiness, manualSupply, profitStreak >= 2,
                             plan.round === 1 && (roundOneAtCost || fundChain), productPriceStreaks);
                     }
                 }
@@ -409,8 +488,12 @@ export async function main(ns) {
         const heartbeat = {
             timestamp: now, pid, mode, preset, ...plan,
             completedPhase, cycles, lastFullCycle, settled, lastSettlement, funding, fundingResult: fundingResults.at(-1) ?? null, fundingResults,
-            upgradePlan, upgradeResult, careSpent, teasBought, marketResearch, productStatus,
-            preservation, development, financeResult, liquidationStatus,
+            upgradePlan, upgradeResult, warehousePressure, scalingStatus, researchBanks, supplyStreak, demandStreak, round3Deployments, careSpent, teasBought, officeCareStatus, marketResearch, productStatus,
+            preservation, development, financeResult, financeResults: financeResults.slice(-20), liquidationStatus,
+            capitalPolicy: { automatic: automaticCapital, privateFundingRounds: CONFIG.market.privateFundingRounds,
+                ipoShares: CONFIG.ipoShares, requiredSettlements: CONFIG.market.ipoSettlements, supplyStreak, profitStreak,
+                compoundingRate: CONFIG.market.dividendRate, payoutRate: CONFIG.market.payoutRate,
+                payoutCashThreshold: CONFIG.market.payoutCashThreshold, equityEnabled: financeOptions.equity },
         };
 
         if (changed) {
@@ -428,10 +511,6 @@ export async function main(ns) {
                 }
                 if (settled || (once && !apply && cycleFinished)) throw error;
             }
-        }
-        if (once && !apply && (!plan.nextState || plan.blocker)) {
-            call("tprint", () => ns.tprint(prefix + describe(plan)));
-            return;
         }
         if (cycleFinished) {
             lastReport = cycles;
@@ -545,6 +624,7 @@ function formationPlan(ns, call, preset = CONFIG.preset) {
 
 function planCorporation(ns, call, corp, offer, details, readyRound, manageExpansion = true) {
     const starter = findDivision(ns, call, corp.divisions, CONFIG.starter);
+    details.boostCityCount = starter?.cities.length ?? 0;
     const missing = REQUIRED_UNLOCKS.filter(name => !call("hasUnlock " + name, () => ns.corporation.hasUnlock(name)));
     const setup = [];
     let setupCost = 0;
@@ -597,7 +677,7 @@ function planCorporation(ns, call, corp, offer, details, readyRound, manageExpan
     if (corp.public) {
         details.satelliteSelling = satelliteHasSales(ns, call, starter);
         const actions = ["Maintain supply, staffing, sales and research"];
-        if (corp.dividendRate > 0) actions.push("Reduce dividends to the configured default of zero");
+        actions.push("Apply the configured compounding or payout dividend policy");
         return status("STEADY", null, { ...details, actions });
     }
     const satelliteSelling = satelliteHasSales(ns, call, starter);
@@ -676,7 +756,82 @@ function findDivision(ns, call, names, target) {
     return division;
 }
 
-function applyBootstrap(ns, call, orders, plan, ramp = false, allowUpgrade = false, manualSupply = false,
+// Discover current cities, including divisions/cities adopted after this process started.
+function managedSites(ns, call, names, manageExpansion = true) {
+    const agriculture = findDivision(ns, call, names ?? [], CONFIG.starter);
+    const tobacco = manageExpansion ? findDivision(ns, call, names ?? [], CONFIG.product) : null;
+    return [agriculture, tobacco].filter(Boolean).flatMap(division =>
+        division.cities.filter(city => manageExpansion || city === CONFIG.starter.city)
+            .map(city => ({ division, city, agriculture: division === agriculture })));
+}
+
+// Stop cash outflow from live state. Sales and exports deliberately keep clearing stock.
+// This also runs before the first planning pass after a restart, without an order ledger.
+export function reconcileManagedPurchases(ns, call) {
+    const result = { cleared: [], disabled: [], errors: [] };
+    const attempt = run => {
+        try { return run(); }
+        catch (error) { result.errors.push(String(error.message ?? error)); return undefined; }
+    };
+    const live = attempt(() => call("hasCorporation", () => ns.corporation.hasCorporation()) &&
+        call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API")) &&
+        call("getCorporation", () => ns.corporation.getCorporation()));
+    if (!live) return result;
+    for (const target of [CONFIG.starter, CONFIG.product]) {
+        const division = attempt(() => findDivision(ns, call, live.divisions, target));
+        if (!division) continue;
+        const industry = attempt(() => call("getIndustryData", () => ns.corporation.getIndustryData(division.industry)));
+        const materials = new Set([...Object.keys(industry?.requiredMaterials ?? {}), ...BOOSTS]);
+        for (const city of division.cities) {
+            if (!attempt(() => call("hasWarehouse", () => ns.corporation.hasWarehouse(division.name, city)))) continue;
+            const warehouse = attempt(() => call("getWarehouse", () => ns.corporation.getWarehouse(division.name, city)));
+            if (warehouse?.smartSupplyEnabled) attempt(() => {
+                setSmartSupply(ns, call, division.name, false, city);
+                result.disabled.push({ division: division.name, city });
+            });
+            for (const material of materials) attempt(() => {
+                const stock = readMaterial(ns, call, division.name, material, city);
+                if (stock.buyAmount === 0) return;
+                call("clear " + material, () => ns.corporation.buyMaterial(division.name, city, material, 0));
+                if (readMaterial(ns, call, division.name, material, city).buyAmount !== 0) {
+                    throw new Error("Purchase cleanup did not complete for " + division.name + "/" + city + "/" + material);
+                }
+                result.cleared.push({ division: division.name, city, material });
+            });
+        }
+    }
+    return result;
+}
+
+export function reconcileWarehousePressure(ns, call, plan, manageExpansion = true) {
+    if (plan.nextState !== "START" ||
+        !call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API"))) return [];
+    const corp = ns.corporation;
+    const live = call("getCorporation", () => corp.getCorporation());
+    const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
+    const results = [];
+    for (const { division, city } of managedSites(ns, call, live.divisions, manageExpansion)) {
+        if (!call("hasWarehouse", () => corp.hasWarehouse(division.name, city))) continue;
+        const warehouse = call("getWarehouse", () => corp.getWarehouse(division.name, city));
+        if (warehouse.sizeUsed < warehouse.size * CONFIG.warehouseUpgradeAt) continue;
+        const before = call("getCorporation", () => corp.getCorporation());
+        const reserve = operatingReserve(before.expenses, seconds, before.revenue);
+        const cost = call("getUpgradeWarehouseCost", () => corp.getUpgradeWarehouseCost(division.name, city, 1));
+        const entry = { division: division.name, city, cost, upgraded: false, blocker: null };
+        if (before.nextState !== "START" || !(before.revenue > before.expenses)) entry.blocker = "Waiting for profitable START";
+        else if (!Number.isFinite(cost) || cost <= 0 || before.funds - reserve < 3 * cost) entry.blocker = "Preserving warehouse reserve and headroom";
+        else {
+            call("upgradeWarehouse", () => corp.upgradeWarehouse(division.name, city, 1));
+            const after = call("getWarehouse", () => corp.getWarehouse(division.name, city));
+            if (!(after.size > warehouse.size)) throw new Error("Warehouse upgrade did not complete for " + division.name + "/" + city);
+            entry.upgraded = true;
+        }
+        results.push(entry);
+    }
+    return results;
+}
+
+function applyBootstrap(ns, call, plan, ramp = false, allowUpgrade = false, manualSupply = false,
     supplyReadiness = new Map(), completedPhase = null, manageTobacco = false, preset = CONFIG.preset) {
     if (plan.stage === "NO_CORP") {
         if (plan.blocker) return false;
@@ -732,7 +887,9 @@ function applyBootstrap(ns, call, orders, plan, ramp = false, allowUpgrade = fal
                 return true;
             }
         }
-        if (ramp && office.size >= CONFIG.round1OfficeSize && office.numEmployees <= CONFIG.round1OfficeSize) {
+        if (ramp && office.size >= CONFIG.round1OfficeSize && (office.numEmployees <= CONFIG.round1OfficeSize ||
+            (ns.args.includes("--scale-production") && office.numEmployees < office.size && office.size <=
+                (corp.public ? CONFIG.scaling.publicOfficeCeiling : plan.round >= 4 ? CONFIG.scaling.postRound3OfficeCeiling : CONFIG.scaling.privateOfficeCeiling)))) {
             if (staffRampOffice(ns, call, starter.name, city, office)) return true;
         } else if (staffStarter(ns, call, starter.name, city, office)) {
             return true;
@@ -742,54 +899,18 @@ function applyBootstrap(ns, call, orders, plan, ramp = false, allowUpgrade = fal
     const warehouse = call("getWarehouse", () => ns.corporation.getWarehouse(starter.name, city));
     const spendable = corp.funds - plan.reserve;
     const phase = corp.nextState;
-    if (manageTobacco && CONFIG.tobacco.exportPlants && completedPhase === "START" &&
-        phase === "PURCHASE" && !plan.blocker && plan.round > CONFIG.tobacco.exportUnlockAfterRound &&
-        spendable >= CONFIG.purchaseBudget && !call("hasUnlock Export", () => ns.corporation.hasUnlock("Export"))) {
-        const tobacco = findDivision(ns, call, corp.divisions, CONFIG.product);
-        if (tobacco?.cities.includes(CONFIG.product.city) && tobacco.products.length > 0 &&
-            call("hasWarehouse", () => ns.corporation.hasWarehouse(tobacco.name, CONFIG.product.city)) &&
-            ensureOptionalUnlock(ns, call, "Export", spendable - CONFIG.purchaseBudget) !== null) return true;
-    }
     if (phase === "PURCHASE" && office.employeeJobs.Operations && office.employeeJobs.Engineer) {
         const stable = supplyIsStable(ns, call, supplyReadiness, starter.name, city, office, warehouse, completedPhase);
         const fallback = manualSupply || !stable || plan.cashExpansion === CONFIG.round1City ||
             (plan.cashExpansion && !call("hasUnlock Smart Supply", () => ns.corporation.hasUnlock("Smart Supply")));
-        return preparePurchases(ns, call, orders, starter, warehouse, spendable, plan.operatingRate > 0,
+        return preparePurchases(ns, call, starter, warehouse, spendable, plan.operatingRate > 0,
             hasRampStaff(office) && plan.satelliteSelling && allowUpgrade, fallback, city, boostBudgetForSite(plan), agricultureInputCycles(corp.funds, plan.satelliteSelling));
     }
-    let changed = clearStarterPurchases(ns, call, orders, starter.name, warehouse);
-    if (phase === "START" && plan.operatingRate > 0) {
-        changed = upgradeCrowdedWarehouses(ns, call, starter, manageTobacco) || changed;
-    }
+    let changed = clearStarterPurchases(ns, call, starter.name, warehouse);
     if (phase === "EXPORT" && (CONFIG.exports.length || (manageTobacco && CONFIG.tobacco.exportPlants))) {
         changed = reconcileExports(ns, call, starter, spendable, manageTobacco) || changed;
     }
     if (phase === "SALE") changed = priceStarterOutputs(ns, call, starter, warehouse) || changed;
-    return changed;
-}
-
-// Only manage expansion sites that this controller supplies.
-function upgradeCrowdedWarehouses(ns, call, starter, manageExpansion) {
-    const corp = ns.corporation;
-    const sites = [[starter, CONFIG.starter.city]];
-    if (manageExpansion) {
-        sites.push([starter, CONFIG.round1City]);
-        const tobacco = findDivision(ns, call, corp.getCorporation().divisions, CONFIG.product);
-        if (tobacco) sites.push([tobacco, CONFIG.product.city]);
-    }
-    const seconds = corp.getConstants().secondsPerMarketCycle;
-    let changed = false;
-    for (const [division, city] of sites) {
-        if (!division.cities.includes(city) || !corp.hasWarehouse(division.name, city)) continue;
-        const warehouse = corp.getWarehouse(division.name, city);
-        if (warehouse.sizeUsed < warehouse.size * CONFIG.warehouseUpgradeAt) continue;
-        const live = corp.getCorporation();
-        const reserve = operatingReserve(live.expenses, seconds, live.revenue);
-        const cost = corp.getUpgradeWarehouseCost(division.name, city, 1);
-        if (live.nextState !== "START" || live.revenue <= live.expenses || !(cost > 0 && live.funds - reserve >= 3 * cost)) continue;
-        corp.upgradeWarehouse(division.name, city, 1);
-        changed = true;
-    }
     return changed;
 }
 
@@ -811,23 +932,34 @@ function staffStarter(ns, call, division, city, office) {
         changed = true;
     }
 
-    // Keep other jobs where possible. Free a seat before filling a missing required role.
-    let unassigned = jobs.Unassigned;
+    // Preserve extra roles, but rebuild the queued assignment as one complete batch.
+    let unassigned = jobs.Unassigned ?? 0;
+    let rebalance = false;
     for (const job of STARTER_JOBS) {
         if (jobs[job]) continue;
         if (!unassigned) {
             const donor = Object.keys(jobs).find(role => role !== "Unassigned" &&
                 jobs[role] > Number(STARTER_JOBS.includes(role)));
             if (!donor) continue;
-            setStarterJob(ns, call, division, city, donor, --jobs[donor]);
+            jobs[donor]--;
             unassigned++;
         }
-        setStarterJob(ns, call, division, city, job, 1);
         jobs[job] = 1;
         unassigned--;
-        changed = true;
+        rebalance = true;
     }
-    return changed;
+    if (rebalance) queueOfficeJobs(ns, call, division, city, office.employeeJobs, jobs);
+    return changed || rebalance;
+}
+
+function queueOfficeJobs(ns, call, division, city, applied, targets) {
+    // Applied counts do not reveal a partially written queue from a prior process.
+    const roles = new Set([...Object.keys(applied), ...Object.keys(targets)]);
+    roles.delete("Unassigned");
+    for (const role of roles) setStarterJob(ns, call, division, city, role, 0);
+    for (const [role, count] of Object.entries(targets)) {
+        if (role !== "Unassigned" && count > 0) setStarterJob(ns, call, division, city, role, count);
+    }
 }
 
 function setStarterJob(ns, call, division, city, job, count) {
@@ -850,7 +982,7 @@ function supplyIsStable(ns, call, readiness, division, city, office, warehouse, 
     return count >= CONFIG.supplySettleCycles;
 }
 
-function preparePurchases(ns, call, orders, division, warehouse, spendable, profitable, ramped, manualSupply = false,
+function preparePurchases(ns, call, division, warehouse, spendable, profitable, ramped, manualSupply = false,
     city = CONFIG.starter.city, boostBudget = CONFIG.boostPurchaseBudget, inputCycles = 0) {
     const { secondsPerMarketCycle: seconds } = call("getConstants", () => ns.corporation.getConstants());
     const industry = call("getIndustryData", () => ns.corporation.getIndustryData(division.industry));
@@ -896,7 +1028,7 @@ function preparePurchases(ns, call, orders, division, warehouse, spendable, prof
     const inputSpace = measureOrder(inputDemand, "size");
     const inputScale = smart ? 1 : fitOrder(inputCost, inputSpace, Math.min(spendable, CONFIG.purchaseBudget), room);
     if (!smart) {
-        changed = orders.write(division.name, city, inputDemand, input => input.quantity * inputScale / seconds) || changed;
+        changed = writeStarterPurchases(ns, call, division.name, inputDemand, input => input.quantity * inputScale / seconds, city) || changed;
     }
     const boosts = BOOSTS.map(name => readStock(ns, call, division.name, name, city));
     const boostUsed = boosts.reduce((total, stock) => total + stock.stored * stock.size, 0);
@@ -908,7 +1040,7 @@ function preparePurchases(ns, call, orders, division, warehouse, spendable, prof
     const scale = CONFIG.boosts && ramped && profitable && division.lastCycleRevenue > division.lastCycleExpenses ? fitOrder(measureOrder(demand, "marketPrice"), measureOrder(demand, "size"),
         Math.min(boostBudget, spendable - inputCost * inputScale),
         Math.min(boostSpace - boostUsed, room - inputSpace * inputScale)) : 0;
-    return orders.write(division.name, city, demand, stock => stock.quantity * scale / seconds) || changed;
+    return writeStarterPurchases(ns, call, division.name, demand, stock => stock.quantity * scale / seconds, city) || changed;
 }
 
 function agricultureInputCycles(funds, satelliteSelling) {
@@ -919,7 +1051,10 @@ function agricultureInputCycles(funds, satelliteSelling) {
 function boostBudgetForSite(plan) {
     const profit = plan.operatingRate * plan.secondsPerMarketCycle;
     if (!Number.isFinite(profit)) return 0;
-    return Math.max(0, Math.min(CONFIG.boostPurchaseBudget, profit * CONFIG.boostProfitSharePerCity));
+    const share = (plan.public || plan.round >= 4) && plan.funds >= 10e9
+        ? CONFIG.postRound3BoostProfitSharePerCity : CONFIG.boostProfitSharePerCity;
+    const boundedShare = Math.min(share, CONFIG.scaling.boostTotalProfitShare / Math.max(1, plan.boostCityCount ?? 2));
+    return Math.max(0, Math.min(CONFIG.boostPurchaseBudget, profit * boundedShare));
 }
 
 function readStock(ns, call, division, name, city = CONFIG.starter.city) {
@@ -955,60 +1090,23 @@ function ensureOptionalUnlock(ns, call, name, spendable) {
     return cost;
 }
 
-function clearStarterPurchases(ns, call, orders, division, warehouse = null, city = CONFIG.starter.city) {
+function clearStarterPurchases(ns, call, division, warehouse = null, city = CONFIG.starter.city) {
     warehouse ??= call("getWarehouse", () => ns.corporation.getWarehouse(division, city));
     const names = warehouse.smartSupplyEnabled ? BOOSTS : [...INPUTS, ...BOOSTS];
     const stocks = names.map(name => ({ ...readMaterial(ns, call, division, name, city), name }));
-    return orders.write(division, city, stocks, () => 0);
+    return writeStarterPurchases(ns, call, division, stocks, () => 0, city);
 }
 
-// Persist ownership before setting a rate. A stopped script leaves its buy rates active in game.
-function createPurchaseOrders(ns, file) {
-    const entries = new Map(JSON.parse(ns.read(file) || "[]"));
-    const save = () => ns.write(file, JSON.stringify([...entries]), "w");
-
-    function write(division, city, stocks, rateFor) {
-        const changes = [];
-        for (const stock of stocks) {
-            const rate = rateFor(stock);
-            if (Math.abs(stock.buyAmount - rate) < 1e-9) continue;
-            const key = JSON.stringify([division, city, stock.name]);
-            changes.push({ key, name: stock.name, rate });
-            if (rate > 0) {
-                // Either rate can be live if the batch is interrupted between material writes.
-                const owned = entries.get(key) ?? [];
-                entries.set(key, owned.includes(stock.buyAmount) ? [stock.buyAmount, rate] : [rate]);
-            }
-        }
-        if (changes.some(change => change.rate > 0)) save();
-        let retired = false;
-        for (const { key, name, rate } of changes) {
-            ns.corporation.buyMaterial(division, city, name, rate);
-            if (rate === 0 && entries.delete(key)) retired = true;
-        }
-        if (retired) save();
-        return changes.length > 0;
+function writeStarterPurchases(ns, call, division, inputs, rateFor, city = CONFIG.starter.city) {
+    let changed = false;
+    for (const input of inputs) {
+        const rate = rateFor(input);
+        if (Math.abs(input.buyAmount - rate) < 1e-9) continue;
+        call("buyMaterial " + input.name,
+            () => ns.corporation.buyMaterial(division, city, input.name, rate));
+        changed = true;
     }
-
-    function clear() {
-        if (!entries.size) return;
-        const corp = ns.corporation;
-        const divisions = corp.hasCorporation() ? corp.getCorporation().divisions : [];
-        for (const [key, rates] of entries) {
-            const [division, city, material] = JSON.parse(key);
-            try {
-                if (divisions.includes(division) && corp.getDivision(division).cities.includes(city) &&
-                    corp.hasWarehouse(division, city) && rates.includes(corp.getMaterial(division, city, material).buyAmount)) {
-                    corp.buyMaterial(division, city, material, 0);
-                }
-                entries.delete(key);
-            } catch (error) {
-                ns.print("Could not clear " + key + ": " + String(error));
-            }
-        }
-        save();
-    }
-    return { write, clear };
+    return changed;
 }
 
 function readSettlement(ns, call, allowZeroRevenue = false) {
@@ -1035,6 +1133,7 @@ function formatSettlement(sample) {
             "/s (inputs $" + amount(sample.materialPurchases.inputs / sample.materialPurchases.seconds) +
             ", boosts $" + amount(sample.materialPurchases.boosts / sample.materialPurchases.seconds) + ")" :
             ", materials unavailable") +
+        ", office care $" + amount(sample.officeCareSpend ?? 0) + " per cycle" +
         formatRunway(sample.treasury) + formatDevelopment(sample.development) + formatSupplyInputs(sample.productInputs, "Tobacco") +
         (sample.agricultureInputs ?? []).map(site => formatSupplyInputs(site, site.division + "/" + site.city)).join("") +
         ", funding gate " + (sample.fundingReady ? "passed" : "waiting") +
@@ -1042,7 +1141,7 @@ function formatSettlement(sample) {
         sample.rampProfitStreak + " with nine-seat staffing)";
 }
 
-function finishBootstrapOrders(ns, call, orders, settlement) {
+function finishBootstrapOrders(ns, call, settlement) {
     const warehouse = call("getWarehouse", () => ns.corporation.getWarehouse(settlement.division, CONFIG.starter.city));
     settlement.smartSupply = warehouse.smartSupplyEnabled;
     settlement.warehouse = { occupied: warehouse.sizeUsed, capacity: warehouse.size };
@@ -1055,11 +1154,8 @@ function finishBootstrapOrders(ns, call, orders, settlement) {
         const office = call("getOffice", () => ns.corporation.getOffice(settlement.division, CONFIG.starter.city));
         settlement.office = { employees: office.numEmployees, energy: office.avgEnergy, morale: office.avgMorale };
     }
-    if (warehouse.smartSupplyEnabled) {
-        setSmartSupply(ns, call, settlement.division, false);
-        warehouse.smartSupplyEnabled = false;
-    }
-    clearStarterPurchases(ns, call, orders, settlement.division, warehouse);
+    const cleanup = reconcileManagedPurchases(ns, call);
+    if (cleanup.errors.length) throw new Error("Purchase cleanup: " + cleanup.errors.join("; "));
 }
 
 function priceStarterOutputs(ns, call, division, warehouse, city = CONFIG.starter.city) {
@@ -1114,7 +1210,7 @@ function reconcileExports(ns, call, source, spendable, manageTobacco = false) {
         const target = findDivision(ns, call, corp.divisions, CONFIG.product);
         if (target) {
             const targetCity = CONFIG.product.city;
-            for (const city of new Set([sourceCity, CONFIG.round1City])) {
+            for (const city of new Set(source.cities)) {
                 if (!source.cities.includes(city) ||
                     !call("hasWarehouse", () => ns.corporation.hasWarehouse(source.name, city))) continue;
                 const key = JSON.stringify([city, "Plants", target.name, targetCity]);
@@ -1181,6 +1277,11 @@ function reconcileExports(ns, call, source, spendable, manageTobacco = false) {
             ns.corporation.cancelExportMaterial(source.name, sourceCity, targetDivision, targetCity, material));
         if (rate > 0) call("exportMaterial " + material, () =>
             ns.corporation.exportMaterial(source.name, sourceCity, targetDivision, targetCity, material, rate.toFixed(6)));
+        const routes = readMaterial(ns, call, source.name, material, sourceCity).exports
+            .filter(route => route.division === targetDivision && route.city === targetCity);
+        if (rate > 0 ? routes.length !== 1 || Number(routes[0].amount) !== rate : routes.length !== 0) {
+            throw new Error("Export replacement did not complete for " + source.name + "/" + sourceCity + "/" + material);
+        }
     }
     return true;
 }
@@ -1194,11 +1295,57 @@ function starterOffice(ns, call) {
 }
 
 function hasRampStaff(office) {
-    return office?.numEmployees === CONFIG.round1OfficeSize &&
-        Object.entries(RAMP_JOBS).every(([role, count]) => office.employeeJobs[role] === count);
+    if (!office || office.numEmployees < CONFIG.round1OfficeSize) return false;
+    if (office.numEmployees > CONFIG.round1OfficeSize) return ["Operations", "Engineer", "Business", "Management", "Research & Development"]
+        .every(job => office.employeeJobs[job] > 0) && !office.employeeJobs.Unassigned &&
+        office.employeeJobs.Intern >= Math.ceil(office.numEmployees / 9);
+    const targets = officeJobTargets(RAMP_JOBS, office);
+    return Object.entries(targets).every(([role, count]) => office.employeeJobs[role] === count);
+}
+
+// v3.0.1: >=9 employees need 1/9 Interns to hold morale/energy; 2/9 recover naturally.
+// Derive the recovery hysteresis from applied jobs and live stats, including after restart.
+export function officeJobTargets(base, office) {
+    const targets = { ...base };
+    const seats = Object.values(targets).reduce((sum, count) => sum + count, 0);
+    if (!CONFIG.officeInterns.enabled || seats < 9) return targets;
+    const maintenance = Math.ceil(seats / 9);
+    const health = Math.min(office.avgEnergy ?? 100, office.avgMorale ?? 100);
+    const current = office.employeeJobs?.Intern ?? 0;
+    const recovering = health < CONFIG.officeInterns.recoverBelow ||
+        (current !== maintenance && health < CONFIG.officeInterns.recoverTo);
+    const desired = recovering ? Math.ceil(2 * seats / 9) : maintenance;
+    const donors = (base.Management ?? 0) > 1 ? ["Engineer", "Management", "Operations"] :
+        ["Operations", "Engineer", "Management"];
+    if ((targets.Intern ?? 0) > desired) {
+        targets[donors[0]] += targets.Intern - desired;
+        targets.Intern = desired;
+    }
+    let needed = Math.max(0, desired - (targets.Intern ?? 0));
+    while (needed > 0) {
+        let assigned = false;
+        for (const role of donors) {
+            if (!needed) break;
+            if ((targets[role] ?? 0) <= 1) continue;
+            targets[role]--;
+            targets.Intern = (targets.Intern ?? 0) + 1;
+            needed--;
+            assigned = true;
+        }
+        if (!assigned) break;
+    }
+    return targets;
 }
 
 function staffRampOffice(ns, call, division, city, office, targets = RAMP_JOBS) {
+    // Resume a partly hired scaling batch from the live purchased office size.
+    if (ns.args.includes("--scale-production") && office.size > 9) {
+        const live = call("getCorporation", () => ns.corporation.getCorporation());
+        const round = live.public ? 5 : call("getInvestmentOffer", () => ns.corporation.getInvestmentOffer()).round;
+        const ceiling = live.public ? CONFIG.scaling.publicOfficeCeiling : round >= 4 ? CONFIG.scaling.postRound3OfficeCeiling : CONFIG.scaling.privateOfficeCeiling;
+        if (office.size <= ceiling) targets = scaledOfficeJobs(targets, office.size);
+    }
+    targets = officeJobTargets(targets, office);
     const seats = Object.values(targets).reduce((sum, count) => sum + count, 0);
     if (office.numEmployees > seats ||
         (office.numEmployees === seats && Object.entries(targets).every(([job, count]) => office.employeeJobs[job] === count))) return false;
@@ -1215,14 +1362,10 @@ function staffRampOffice(ns, call, division, city, office, targets = RAMP_JOBS) 
             changed = true;
         }
     }
-    for (const [job, current] of Object.entries(jobs)) {
-        if (job === "Unassigned" || current <= (targets[job] ?? 0)) continue;
-        setStarterJob(ns, call, division, city, job, targets[job] ?? 0);
-        changed = true;
-    }
-    for (const [job, target] of Object.entries(targets)) {
-        if ((jobs[job] ?? 0) >= target) continue;
-        setStarterJob(ns, call, division, city, job, target);
+    const matches = Object.entries(targets).every(([job, count]) => jobs[job] === count) &&
+        Object.entries(jobs).every(([job, count]) => job === "Unassigned" || count === (targets[job] ?? 0));
+    if (!matches) {
+        queueOfficeJobs(ns, call, division, city, office.employeeJobs, targets);
         changed = true;
     }
     return changed;
@@ -1279,21 +1422,35 @@ function formatProductivity(sample) {
         (prod.outputUnits === undefined ? "" : " output units, produced " + prod.outputUnits.toFixed(2)) + ".";
 }
 
-function careForManagedOffices(ns, call, plan, recovering, manageExpansion) {
+export function careForManagedOffices(ns, call, plan, recovering, manageExpansion) {
     const corp = ns.corporation;
-    const totals = { spent: 0, teas: 0, party: 0, recovering: false };
+    const totals = { spent: 0, teas: 0, party: 0, recovering: false, budget: 0, internAssignments: [] };
     if (!plan.divisions?.length || !call("hasUnlock Office API", () => corp.hasUnlock("Office API"))) return totals;
-    const agri = findDivision(ns, call, plan.divisions, CONFIG.starter);
-    const tobacco = manageExpansion ? findDivision(ns, call, plan.divisions, CONFIG.product) : null;
-    const sites = [[agri, CONFIG.starter.city]];
-    if (manageExpansion) sites.push([agri, CONFIG.round1City], [tobacco, CONFIG.product.city]);
+    const sites = managedSites(ns, call, plan.divisions, manageExpansion);
     const { teaCostPerEmployee } = call("getConstants", () => corp.getConstants());
-    const budget = Math.max(0, Math.min(CONFIG.officeCareBudget, plan.funds - plan.reserve));
-    for (const [division, city] of sites) {
+    const live = call("getCorporation", () => corp.getCorporation());
+    const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
+    const budget = Math.max(0, Math.min(CONFIG.officeCareBudget, live.funds - operatingReserve(live.expenses, seconds, live.revenue),
+        (live.revenue - live.expenses) * seconds * CONFIG.officeCareProfitShare));
+    totals.budget = budget;
+    for (const { division, city, agriculture } of sites) {
         if (!division?.cities.includes(city)) continue;
         const office = call("getOffice", () => corp.getOffice(division.name, city));
         if (!office.numEmployees) continue;
         const key = division.name + "/" + city;
+        if (CONFIG.officeInterns.enabled) {
+            if (office.numEmployees >= 9) {
+                const base = agriculture ? RAMP_JOBS : CONFIG.tobacco.jobs;
+                const targets = officeJobTargets(office.numEmployees === Object.values(base).reduce((a,b)=>a+b,0)
+                    ? base : office.employeeJobs, office);
+                if (!Object.entries(targets).every(([role,count]) => role === "Unassigned" || office.employeeJobs[role] === count)) {
+                    queueOfficeJobs(ns, call, division.name, city, office.employeeJobs, targets);
+                    totals.internAssignments.push({ division: division.name, city, interns: targets.Intern });
+                }
+            }
+            recovering.delete(key);
+            continue;
+        }
         const targetEnergy = Math.min(office.maxEnergy, CONFIG.officeCareTarget);
         const targetMorale = Math.min(office.maxMorale, CONFIG.officeCareTarget);
         const low = Math.min(office.avgEnergy, office.avgMorale) < CONFIG.officeCareTrigger;
@@ -1461,7 +1618,12 @@ function roundOnePackage(satelliteSelling, tobaccoEstablished) {
     return tobaccoEstablished ? CONFIG.round1ScaleUp : CONFIG.fundingRounds[1];
 }
 
-function fundingDecision(plan, samples, profitStreak, rampProfitStreak, growth, allowChain = false) {
+function fundingAuthorized(round, { fundAll, fundRound1, fundChain }) {
+    return round >= 1 && round <= CONFIG.fundingRounds.length &&
+        (fundAll || (fundRound1 && round === 1) || (fundChain && round <= 3));
+}
+
+export function fundingDecision(plan, samples, profitStreak, rampProfitStreak, growth, allowChain = false) {
     const offer = plan.nextOffer;
     const round = offer?.round;
     const first = round === 1;
@@ -1504,6 +1666,7 @@ function fundingDecision(plan, samples, profitStreak, rampProfitStreak, growth, 
         offerBlocker = "Waiting for the Round 1 minimum quote";
     }
     const gates = [
+        [!rule.pendingCalibration, "Round 4 awaits package calibration or an explicit early IPO"],
         [!plan.cashExpansion, "Self-funded expansion takes priority"],
         [!plan.blocker && plan.stage !== "BOOTSTRAP" && plan.nextState === "PURCHASE", "Waiting for an operational settled START"],
         [offer.round === 1 ? rampProfitStreak >= CONFIG.fundingProfitCycles : profitStreak >= CONFIG.fundingProfitCycles,
@@ -1517,7 +1680,8 @@ function fundingDecision(plan, samples, profitStreak, rampProfitStreak, growth, 
     ];
     const blocker = gates.find(([passes]) => !passes)?.[1] ?? null;
     return {
-        active: true, round: offer.round, package: rule.package, packageCost: fundingPackageCost(rule),
+        active: true, round: offer.round, package: rule.package,
+        packageCost: rule.pendingCalibration ? null : fundingPackageCost(rule),
         allocations: rule.allocations ?? null, leanPackage, coverageNeeded, projectedProfit, sampleTarget,
         samples: window.length, window, model, chain, fairOffer,
         ownershipBefore: plan.numShares / plan.totalShares,
@@ -1583,6 +1747,11 @@ function formatFunding(funding) {
     return text + (funding.blocker ? ", " + funding.blocker : ", ready (" + funding.reason + ")");
 }
 
+export function acceptPlannedFunding(ns, call, plan, decision, mode) {
+    if (plan.cashExpansion || !decision?.ready || !fundingAuthorized(decision.round, mode)) return null;
+    return acceptFunding(ns, call, decision, mode.fundChain);
+}
+
 function acceptFunding(ns, call, decision, allowChain = false) {
     const before = call("getCorporation", () => ns.corporation.getCorporation());
     const offer = call("getInvestmentOffer", () => ns.corporation.getInvestmentOffer());
@@ -1606,7 +1775,7 @@ function acceptFunding(ns, call, decision, allowChain = false) {
     if (!decision.ready || before.public || before.nextState !== "PURCHASE" || offer.round !== decision.round ||
         !Number.isFinite(before.funds) || before.funds < reserve || !(before.revenue > before.expenses) || !Number.isFinite(offer.funds) ||
         !Number.isSafeInteger(offer.shares) || offer.shares <= 0 || (!preferred && !settleForFair && !chain) ||
-        rule?.package !== decision.package ||
+        rule?.pendingCalibration || rule?.package !== decision.package ||
         (first && sales?.tobaccoExists && !sales.tobaccoSelling) ||
         (offer.round === 2 && !sales?.satelliteSelling) ||
         (offer.round >= 3 && !sales?.productSelling) ||
@@ -1725,6 +1894,49 @@ function rankTobaccoCampaign(ns, call, plan, growth, level) {
         affordable: Number.isFinite(cost) && cost > 0 && cost <= budget };
 }
 
+export function planRound3Package(ns, call, plan) {
+    const corp = ns.corporation;
+    const live = call("getCorporation", () => corp.getCorporation());
+    if (live.public || live.nextState !== "PURCHASE" || live.revenue <= live.expenses ||
+        call("getInvestmentOffer", () => corp.getInvestmentOffer()).round < 4) return null;
+    const tobacco = findDivision(ns, call, live.divisions, CONFIG.product);
+    const city = CONFIG.product.city;
+    if (!tobacco?.cities.includes(city) || !call("hasWarehouse", () => corp.hasWarehouse(tobacco.name, city)) ||
+        !(tobacco.lastCycleRevenue > 0)) return null;
+    const budget = CONFIG.fundingRounds[2].allocations;
+    if (CONFIG.tobacco.exportPlants && !call("hasUnlock Export", () => corp.hasUnlock("Export"))) {
+        return { name: "Export", kind: "unlock", packageLimit: budget.Export, budgetClass: "package" };
+    }
+    const wilson = call("getUpgradeLevel Wilson Analytics", () => corp.getUpgradeLevel("Wilson Analytics"));
+    const research = call("getUpgradeLevel Project Insight", () => corp.getUpgradeLevel("Project Insight"));
+    const actions = [
+        wilson === 1 && { name: "Wilson Analytics", level: wilson, division: tobacco.name },
+        wilson >= 2 && tobacco.numAdVerts === 3 &&
+            { name: "AdVert", kind: "advert", level: tobacco.numAdVerts, division: tobacco.name },
+        research === 0 && { name: "Project Insight", level: research },
+    ];
+    const next = actions.find(Boolean);
+    return next ? { ...next, budgetClass: "package", packageLimit: budget[next.name] } : null;
+}
+
+export function deployRound3Package(ns, call, plan) {
+    const next = planRound3Package(ns, call, plan);
+    if (!next) return null;
+    if (next.kind !== "unlock") return buyRankedUpgrade(ns, call, next);
+    const corp = ns.corporation;
+    const live = call("getCorporation", () => corp.getCorporation());
+    const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
+    const spendable = live.funds - operatingReserve(live.expenses, seconds, live.revenue) - 3 * CONFIG.purchaseBudget;
+    const quote = call("getUnlockCost Export", () => corp.getUnlockCost("Export"));
+    if (!Number.isFinite(quote) || quote <= 0 || quote > next.packageLimit || quote > spendable) return null;
+    const cost = ensureOptionalUnlock(ns, call, "Export", spendable);
+    const after = call("getCorporation", () => corp.getCorporation());
+    if (cost === null || !cashMatches(after.funds, live.funds - cost)) {
+        throw new Error("Export unlock result did not match the quoted cost");
+    }
+    return { name: "Export", cost, budgetClass: "package" };
+}
+
 function buyRankedUpgrade(ns, call, candidate) {
     const before = call("getCorporation", () => ns.corporation.getCorporation());
     const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
@@ -1733,10 +1945,13 @@ function buyRankedUpgrade(ns, call, candidate) {
         call("getUpgradeLevel " + candidate.name, () => ns.corporation.getUpgradeLevel(candidate.name));
     const cost = advert ? call("getHireAdVertCost", () => ns.corporation.getHireAdVertCost(candidate.division)) :
         call("getUpgradeLevelCost " + candidate.name, () => ns.corporation.getUpgradeLevelCost(candidate.name));
-    const fraction = candidate.campaign ? CONFIG.tobaccoCampaign.spendableFraction : CONFIG.upgradeBudgetFraction;
-    const budget = Math.max(0, before.funds - operatingReserve(before.expenses, seconds, before.revenue)) * fraction;
+    const packaged = candidate.budgetClass === "package";
+    if (packaged && !(Number.isFinite(candidate.packageLimit) && candidate.packageLimit > 0)) return null;
+    const fraction = packaged || candidate.budgetClass === "scaling" ? 1 : candidate.campaign ? CONFIG.tobaccoCampaign.spendableFraction : CONFIG.upgradeBudgetFraction;
+    const workingCash = packaged ? 3 * CONFIG.purchaseBudget : 0;
+    const budget = Math.max(0, before.funds - operatingReserve(before.expenses, seconds, before.revenue) - workingCash) * fraction;
     if (before.nextState !== "PURCHASE" || before.revenue <= before.expenses || level !== candidate.level ||
-        !Number.isFinite(cost) || cost <= 0 || cost > budget) return null;
+        !Number.isFinite(cost) || cost <= 0 || cost > Math.min(budget, candidate.packageLimit ?? Infinity, candidate.budgetLimit ?? Infinity)) return null;
     if (advert) {
         call("hireAdVert", () => ns.corporation.hireAdVert(candidate.division));
     } else {
@@ -1748,7 +1963,7 @@ function buyRankedUpgrade(ns, call, candidate) {
     if (nextLevel !== level + 1 || !cashMatches(after.funds, before.funds - cost)) {
         throw new Error(candidate.name + " upgrade result did not match the quoted cost and level");
     }
-    return { name: candidate.name, division: candidate.division ?? null, fromLevel: level, level: nextLevel, cost, campaign: Boolean(candidate.campaign) };
+    return { name: candidate.name, division: candidate.division ?? null, fromLevel: level, level: nextLevel, cost, campaign: Boolean(candidate.campaign), budgetClass: packaged ? "package" : "discretionary" };
 }
 
 function advanceMarketResearch(ns, call, reserve, bankOnly = false) {
@@ -1801,7 +2016,7 @@ function advanceMarketResearch(ns, call, reserve, bankOnly = false) {
         purchased, staffing, seatCost, researchedTA2: next === null };
 }
 
-function reconcileExpansion(ns, call, plan, completedPhase, productTA, weakProducts, orders, allowCapital, previous,
+function reconcileExpansion(ns, call, plan, completedPhase, productTA, weakProducts, allowCapital, previous,
     supplyReadiness = new Map(), manualSupply = false, profitable = false, holdProductPrice = false,
     priceStreaks = new Map()) {
     if (!call("hasCorporation", () => ns.corporation.hasCorporation())) return null;
@@ -1822,21 +2037,26 @@ function reconcileExpansion(ns, call, plan, completedPhase, productTA, weakProdu
         return { division: CONFIG.product.name, action: "Launched Tobacco" };
     }
 
-    const sites = [
-        tobacco && { division: tobacco, city: CONFIG.product.city, jobs: CONFIG.tobacco.jobs },
-        agri && (round >= 2 || plan.cashExpansion === CONFIG.round1City || agri.cities.includes(CONFIG.round1City)) &&
-            { division: agri, city: CONFIG.round1City, jobs: RAMP_JOBS },
-    ].filter(Boolean);
+    const sites = managedSites(ns, call, corp.divisions)
+        .filter(site => !site.agriculture || site.city !== CONFIG.starter.city)
+        .sort((a, b) => Number(a.agriculture) - Number(b.agriculture))
+        .map(site => ({ ...site, jobs: site.agriculture ? RAMP_JOBS : CONFIG.tobacco.jobs }));
+    if (tobacco && !tobacco.cities.includes(CONFIG.product.city)) {
+        sites.unshift({ division: tobacco, city: CONFIG.product.city, jobs: CONFIG.tobacco.jobs, agriculture: false });
+    }
+    if (agri && !agri.cities.includes(CONFIG.round1City) && (round >= 2 || plan.cashExpansion === CONFIG.round1City)) {
+        sites.push({ division: agri, city: CONFIG.round1City, jobs: RAMP_JOBS, agriculture: true });
+    }
     const boostBudget = boostBudgetForSite(plan);
     const starterCommitted = (manualSupply ? CONFIG.purchaseBudget : CONFIG.smartSupplyPurchaseBudget) + boostBudget;
     let remaining = Math.max(0, spendable - starterCommitted);
     let grew = false;
     for (const site of sites) {
-        const { division, city, jobs } = site;
+        const { division, city, jobs, agriculture } = site;
         // Fund Tobacco first after Round 2. Still reconcile orders for existing satellites.
-        const waitingForTobacco = division === agri && round >= 3 && (!tobacco || !tobacco.products.length);
+        const waitingForTobacco = agriculture && round >= 3 && (!tobacco || !tobacco.products.length);
         if (grow && !grew && !waitingForTobacco) {
-            const initialBudget = division === agri && !agri.cities.includes(city) ? CONFIG.fundingRounds[0].cost : 0;
+            const initialBudget = agriculture && !agri.cities.includes(city) ? CONFIG.fundingRounds[0].cost : 0;
             if (spendable >= initialBudget && prepareExpansionOffice(ns, call, division, city, jobs, remaining)) {
                 grew = true;
                 remaining = Math.max(0, call("getCorporation", () => ns.corporation.getCorporation()).funds -
@@ -1847,22 +2067,22 @@ function reconcileExpansion(ns, call, plan, completedPhase, productTA, weakProdu
         if (!call("hasWarehouse", () => ns.corporation.hasWarehouse(division.name, city))) continue;
         const warehouse = call("getWarehouse", () => ns.corporation.getWarehouse(division.name, city));
         const budget = plan.nextState === "PURCHASE" ? Math.min(CONFIG.purchaseBudget, remaining) : 0;
-        if (division !== agri) {
+        if (!agriculture) {
             remaining -= reconcileTobaccoSupply(ns, call, division, city, warehouse, plan.nextState,
-                completedPhase, remaining, budget, orders, supplyReadiness, manualSupply);
+                completedPhase, remaining, budget, supplyReadiness, manualSupply);
             continue;
         }
         if (plan.nextState === "PURCHASE") {
             const office = call("getOffice", () => ns.corporation.getOffice(division.name, city));
             const stable = supplyIsStable(ns, call, supplyReadiness, division.name, city, office, warehouse, completedPhase);
             const smart = stable && plan.satelliteSelling && call("hasUnlock Smart Supply", () => ns.corporation.hasUnlock("Smart Supply"));
-            preparePurchases(ns, call, orders, division, warehouse, remaining, plan.operatingRate > 0,
+            preparePurchases(ns, call, division, warehouse, remaining, plan.operatingRate > 0,
                 stable && plan.satelliteSelling && profitable, manualSupply || !smart, city, boostBudget,
                 agricultureInputCycles(plan.funds, plan.satelliteSelling));
             const committed = smart && !manualSupply ? CONFIG.smartSupplyPurchaseBudget : CONFIG.purchaseBudget;
             remaining = Math.max(0, remaining - committed - boostBudget);
         } else {
-            clearStarterPurchases(ns, call, orders, division.name, warehouse, city);
+            clearStarterPurchases(ns, call, division.name, warehouse, city);
         }
         if (plan.nextState === "SALE") priceStarterOutputs(ns, call, division, warehouse, city);
     }
@@ -1969,7 +2189,7 @@ function prepareExpansionOffice(ns, call, division, city, jobs, spendable) {
 }
 
 function reconcileTobaccoSupply(ns, call, division, city, warehouse, phase, completedPhase, spendable,
-    budget, orders, readiness, manualSupply) {
+    budget, readiness, manualSupply) {
     const corp = ns.corporation;
     const key = division.name + "/" + city;
     if (phase === "PURCHASE" && CONFIG.tobacco.exportPlants && call("hasUnlock Export", () => corp.hasUnlock("Export"))) {
@@ -2000,10 +2220,10 @@ function reconcileTobaccoSupply(ns, call, division, city, warehouse, phase, comp
         setSmartSupply(ns, call, division.name, false, city);
         warehouse.smartSupplyEnabled = false;
     }
-    return reconcileExpansionInputs(ns, call, division, city, warehouse, budget, orders, true);
+    return reconcileExpansionInputs(ns, call, division, city, warehouse, budget, true);
 }
 
-function reconcileExpansionInputs(ns, call, division, city, warehouse, budget, orders, bufferProducts = false) {
+function reconcileExpansionInputs(ns, call, division, city, warehouse, budget, bufferProducts = false) {
     if (warehouse.smartSupplyEnabled) return 0;
     const corp = ns.corporation;
     const { requiredMaterials } = call("getIndustryData", () => corp.getIndustryData(division.industry));
@@ -2021,7 +2241,12 @@ function reconcileExpansionInputs(ns, call, division, city, warehouse, budget, o
     const cost = measureOrder(inputs, "marketPrice");
     const room = Math.max(0, warehouse.size * CONFIG.warehouseFill - warehouse.sizeUsed);
     const scale = fitOrder(cost, measureOrder(inputs, "size"), budget, room);
-    orders.write(division.name, city, inputs, input => input.quantity * scale / seconds);
+    for (const input of inputs) {
+        const amount = input.quantity * scale / seconds;
+        if (Math.abs(input.buyAmount - amount) > 1e-9) {
+            call("buyMaterial " + input.name, () => corp.buyMaterial(division.name, city, input.name, amount));
+        }
+    }
     return cost * scale;
 }
 
@@ -2180,7 +2405,7 @@ function readTobaccoInputs(ns, call, divisions) {
 function readAgricultureInputs(ns, call, divisions) {
     if (!divisions?.length || !call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API"))) return [];
     const division = findDivision(ns, call, divisions, CONFIG.starter);
-    return [CONFIG.starter.city, CONFIG.round1City]
+    return (division?.cities ?? [])
         .filter(city => division?.cities.includes(city) &&
             call("hasWarehouse", () => ns.corporation.hasWarehouse(division.name, city)))
         .map(city => {
@@ -2250,7 +2475,7 @@ function formatDevelopment(development) {
         (office ? ", dev energy " + office.energy.toFixed(1) + ", morale " + office.morale.toFixed(1) : "");
 }
 
-function updatePreservation(plan, previous, settled) {
+export function updatePreservation(plan, previous, settled) {
     if (!Number.isFinite(plan.reserve) || !Number.isFinite(plan.funds)) return previous;
     if (plan.funds <= plan.reserve) return { active: true, healthy: 0 };
     if (!previous.active) return previous;
@@ -2259,7 +2484,7 @@ function updatePreservation(plan, previous, settled) {
     return count >= CONFIG.preservationRecoverySettlements ? { active: false, healthy: 0 } : { active: true, healthy: count };
 }
 
-function reconcilePublicFinances(ns, call, plan, options, profitStreak, settled, preserving) {
+export function reconcilePublicFinances(ns, call, plan, options, profitStreak, settled, preserving) {
     if (!Number.isFinite(plan.reserve)) return null;
     const corp = ns.corporation;
     const live = call("getCorporation", () => corp.getCorporation());
@@ -2271,7 +2496,11 @@ function reconcilePublicFinances(ns, call, plan, options, profitStreak, settled,
     if (!live.public) {
         if (!afterStart || !options.ipo || !healthy) return null;
         const offer = call("getInvestmentOffer", () => corp.getInvestmentOffer());
-        if (!options.ipoEarly && offer.round <= CONFIG.fundingRounds.length) return null;
+        const privateFundingEnded = options.automatic ? offer.round > CONFIG.market.privateFundingRounds :
+            options.ipoEarly || offer.round > CONFIG.fundingRounds.length;
+        if (!privateFundingEnded) return null;
+        if (options.automatic && (profitStreak < CONFIG.market.ipoSettlements || options.supplyStreak < CONFIG.market.ipoSettlements)) return null;
+        if (options.automatic && planRound3Package(ns, call, plan)) return null;
         const shares = CONFIG.ipoShares;
         if (!Number.isSafeInteger(shares) || shares < 0 || shares > live.numShares ||
             (live.numShares - shares) / live.totalShares < CONFIG.market.minimumCeoStake || !(live.valuation > 0)) {
@@ -2284,10 +2513,24 @@ function reconcilePublicFinances(ns, call, plan, options, profitStreak, settled,
             after.investorShares !== live.investorShares || !cashMatches(after.funds, live.funds + shares * after.sharePrice)) {
             throw new Error("IPO verification failed");
         }
-        return { action: "IPO", shares, funds: after.funds - live.funds, ownership: after.numShares / after.totalShares };
+        // Explicitly establish the compounding policy on the same verified IPO pass.
+        call("issueDividends", () => corp.issueDividends(CONFIG.market.dividendRate));
+        const configured = call("getCorporation", () => corp.getCorporation());
+        if (configured.dividendRate !== CONFIG.market.dividendRate) throw new Error("IPO dividend policy did not verify");
+        return { action: "IPO", shares, funds: after.funds - live.funds, ownership: after.numShares / after.totalShares,
+            dividendRate: configured.dividendRate, skippedPrivateRounds: Math.max(0, CONFIG.fundingRounds.length-offer.round+1),
+            before: { funds: live.funds, numShares: live.numShares, totalShares: live.totalShares, issuedShares: live.issuedShares },
+            after: { funds: configured.funds, numShares: configured.numShares, totalShares: configured.totalShares, issuedShares: configured.issuedShares, public: configured.public } };
     }
 
-    const targetRate = healthy && afterStart ? options.dividendRate : 0;
+    const configuredRate = options.automatic && !options.explicitDividend
+        ? (live.funds >= CONFIG.market.payoutCashThreshold && options.supplyStreak >= CONFIG.market.ipoSettlements &&
+            profitStreak >= CONFIG.market.ipoSettlements ? CONFIG.market.payoutRate : CONFIG.market.dividendRate)
+        : options.dividendRate;
+    if (!Number.isFinite(configuredRate) || configuredRate < 0 || configuredRate > CONFIG.market.maximumDividendRate) {
+        throw new Error("Dividend policy exceeds configured bounds");
+    }
+    const targetRate = healthy && afterStart ? configuredRate : 0;
     const cutRate = !healthy && (preserving || live.revenue <= live.expenses || live.funds < reserve * CONFIG.preservationRecoveryBuffer);
     if ((cutRate || afterStart) && live.dividendRate !== targetRate) {
         call("issueDividends", () => corp.issueDividends(targetRate));
@@ -2297,6 +2540,7 @@ function reconcilePublicFinances(ns, call, plan, options, profitStreak, settled,
             ownership: after.numShares / after.totalShares };
     }
     if (!afterStart || !options.equity) return null;
+    // Automatic equity is a liquidity repair, not a recurring growth subsidy.
     const target = Math.max(reserve * CONFIG.preservationRecoveryBuffer, CONFIG.market.equityCashTarget);
     const shares = equityIssueSize(live, target);
     if (!shares) return null;
@@ -2309,10 +2553,12 @@ function reconcilePublicFinances(ns, call, plan, options, profitStreak, settled,
         !cashMatches(after.funds, live.funds + proceeds)) {
         throw new Error("Corporate equity issuance verification failed");
     }
-    return { action: "Issued corporate shares", shares, funds: proceeds, ownership: after.numShares / after.totalShares };
+    return { action: "Issued corporate shares", shares, funds: proceeds, ownership: after.numShares / after.totalShares,
+        before: { funds: live.funds, numShares: live.numShares, totalShares: live.totalShares },
+        after: { funds: after.funds, numShares: after.numShares, totalShares: after.totalShares, cooldown: after.issueNewSharesCooldown } };
 }
 
-function equityIssueSize(corp, targetFunds) {
+export function equityIssueSize(corp, targetFunds) {
     const lot = 10e6;
     if (corp.funds >= targetFunds || corp.issueNewSharesCooldown > 0 ||
         !(corp.sharePrice >= CONFIG.market.minimumSharePrice) || !(corp.valuation > 0)) return 0;
@@ -2327,16 +2573,13 @@ function equityIssueSize(corp, targetFunds) {
     return Math.min(limit, Math.ceil((targetFunds - corp.funds) / conservativePrice / lot) * lot);
 }
 
-function maintainEmergencySales(ns, call, plan, orders) {
+export function maintainEmergencySales(ns, call, plan) {
     if (!plan.divisions?.length || !call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API"))) return;
     const corp = ns.corporation;
-    const agri = findDivision(ns, call, plan.divisions, CONFIG.starter);
     const tobacco = findDivision(ns, call, plan.divisions, CONFIG.product);
-    const managed = [
-        [agri, CONFIG.starter.city], [agri, CONFIG.round1City], [tobacco, CONFIG.product.city],
-    ];
+    const managed = managedSites(ns, call, plan.divisions);
     let budget = plan.nextState === "PURCHASE" ? Math.min(CONFIG.purchaseBudget, Math.max(0, plan.funds) * 0.01) : 0;
-    for (const [division, city] of managed) {
+    for (const { division, city, agriculture } of managed) {
         if (!division?.cities.includes(city) || !call("hasWarehouse", () => corp.hasWarehouse(division.name, city))) continue;
         const warehouse = call("getWarehouse", () => corp.getWarehouse(division.name, city));
         if (warehouse.smartSupplyEnabled) {
@@ -2344,9 +2587,9 @@ function maintainEmergencySales(ns, call, plan, orders) {
             warehouse.smartSupplyEnabled = false;
         }
         const boosts = BOOSTS.map(name => readStock(ns, call, division.name, name, city));
-        orders.write(division.name, city, boosts, () => 0);
-        budget -= reconcileExpansionInputs(ns, call, division, city, warehouse, budget, orders);
-        if (plan.nextState === "SALE" && division === agri) priceStarterOutputs(ns, call, division, warehouse, city);
+        writeStarterPurchases(ns, call, division.name, boosts, () => 0, city);
+        budget -= reconcileExpansionInputs(ns, call, division, city, warehouse, budget, !agriculture);
+        if (plan.nextState === "SALE" && agriculture) priceStarterOutputs(ns, call, division, warehouse, city);
     }
     if (plan.nextState === "SALE" && tobacco) {
         priceTobacco(ns, call, tobacco, readTobaccoProducts(ns, call, tobacco), false);
@@ -2368,14 +2611,14 @@ function divisionRoutes(ns, call, divisions, materials) {
     return routes;
 }
 
-function reconcileLiquidation(ns, call) {
+export function reconcileLiquidation(ns, call, settings = CONFIG.liquidation) {
     if (!call("hasCorporation", () => ns.corporation.hasCorporation())) return null;
     const corp = ns.corporation;
     const before = call("getCorporation", () => corp.getCorporation());
     if (before.nextState !== "PURCHASE") return null;
     const protectedNames = new Set([CONFIG.starter.name, ...CONFIG.starter.aliases,
-        CONFIG.product.name, ...CONFIG.product.aliases, ...CONFIG.liquidation.protect]);
-    const entry = CONFIG.liquidation.allow.find(item => before.divisions.includes(item.name) && !protectedNames.has(item.name));
+        CONFIG.product.name, ...CONFIG.product.aliases, ...settings.protect]);
+    const entry = settings.allow.find(item => before.divisions.includes(item.name) && !protectedNames.has(item.name));
     if (!entry) return { blocker: "No remaining unprotected divisions on the sale list" };
     if (!call("hasUnlock Warehouse API", () => corp.hasUnlock("Warehouse API"))) {
         return { blocker: "Warehouse API required to check supply links" };
@@ -2418,3 +2661,143 @@ function describe(plan) {
         (plan.actions.length ? ". Plan: " + plan.actions.join(", ") : "");
 }
 
+
+// P4 gates deliberately do not authorize funding, IPO or equity actions.
+export function scaledOfficeJobs(base, seats) {
+    const jobs = { ...base };
+    const roles = ["Research & Development", "Engineer", "Operations", "Management", "Business"];
+    let count = Object.values(jobs).reduce((a,b)=>a+b,0);
+    for (let i=0; count < seats; i++,count++) jobs[roles[i % roles.length]]++;
+    return jobs;
+}
+
+export function supplySampleHealthy(sample) {
+    const sites = [sample.productInputs, ...(sample.agricultureInputs ?? [])];
+    return Boolean(sample.productInputs && sample.agricultureInputs?.length && sites.every(site =>
+        site?.stocks.length && site.stocks.every(stock => Number.isFinite(stock.before) && Number.isFinite(stock.after) &&
+            stock.before > 0 && stock.after > 0 && stock.after >= (stock.before - stock.after) * CONFIG.scaling.inputMargin)));
+}
+
+export function planProductionScaling(ns, call, plan, evidence = {}) {
+    const settings = CONFIG.scaling;
+    const live = call("getCorporation", () => ns.corporation.getCorporation());
+    const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
+    const round = live.public ? 5 : call("getInvestmentOffer", () => ns.corporation.getInvestmentOffer()).round;
+    const reserve = operatingReserve(live.expenses, seconds, live.revenue);
+    const excess = Math.max(0, live.funds - reserve);
+    // Retain a full replacement's design + marketing allocation before any facilities/demand spend.
+    const replacementReserve = 2 * tobaccoInvestment(excess);
+    const budget = Math.max(0, excess - replacementReserve) * settings.cashFraction;
+    const ceiling = live.public ? settings.publicOfficeCeiling : round >= 4 ? settings.postRound3OfficeCeiling : settings.privateOfficeCeiling;
+    const status = { ceiling, budget, reserve, replacementReserve, supplyStreak: evidence.supplyStreak ?? 0,
+        demandStreak: evidence.demandStreak ?? 0, selected: null, blocker: null, sites: [] };
+    if (live.nextState !== "PURCHASE" || plan.blocker || !(live.revenue > live.expenses) ||
+        !(evidence.profitStreak >= CONFIG.fundingProfitCycles)) return { ...status, blocker: "Waiting for profitable settled operations" };
+    if (!(evidence.supplyStreak >= settings.stableSettlements)) return { ...status, blocker: "Waiting for sustained buffered inputs" };
+    const sites = managedSites(ns, call, live.divisions).filter(site => call("hasWarehouse", () => ns.corporation.hasWarehouse(site.division.name, site.city)));
+    // Scale the revenue-producing product office before its supplying farms.
+    sites.sort((a,b)=>Number(a.agriculture)-Number(b.agriculture));
+    for (const { division, city, agriculture } of sites) {
+        const office = call("getOffice", () => ns.corporation.getOffice(division.name, city));
+        const warehouse = call("getWarehouse", () => ns.corporation.getWarehouse(division.name, city));
+        const required = call("getIndustryData", () => ns.corporation.getIndustryData(division.industry)).requiredMaterials;
+        const inputsReady = Object.keys(required).every(name => {
+            const material = readMaterial(ns,call,division.name,name,city);
+            return material.stored > Math.max(0, -material.productionAmount * seconds * settings.inputMargin);
+        });
+        const outputs = agriculture ? OUTPUTS.map(name => readMaterial(ns, call, division.name, name, city)) :
+            division.products.map(name => call("getProduct", () => ns.corporation.getProduct(division.name, city, name)))
+                .filter(product => product.developmentProgress >= 100);
+        const soldThrough = outputs.length > 0 && outputs.every(output => output.productionAmount > 0 &&
+            (output.actualSellAmount >= output.productionAmount * CONFIG.upgradeSellThrough ||
+                (agriculture && output.exports?.length > 0 && output.actualSellAmount > 0 &&
+                    output.stored <= Math.max(1e-6, output.productionAmount * seconds * (1-CONFIG.upgradeSellThrough)))));
+        const health = Math.min(office.avgEnergy, office.avgMorale);
+        const ready = inputsReady && health >= settings.minimumHealth && warehouse.sizeUsed / warehouse.size < settings.maximumOfficeFill;
+        status.sites.push({ division: division.name, city, seats: office.size, employees: office.numEmployees, health,
+            fill: warehouse.sizeUsed / warehouse.size, soldThrough, inputsReady });
+        if (!ready) continue;
+        if (!agriculture && evidence.demandStreak >= settings.stableSettlements && !soldThrough) {
+            const level = call("getUpgradeLevel", () => ns.corporation.getUpgradeLevel("Wilson Analytics"));
+            const advertCost = call("getHireAdVertCost", () => ns.corporation.getHireAdVertCost(division.name));
+            const wilsonCost = call("getUpgradeLevelCost", () => ns.corporation.getUpgradeLevelCost("Wilson Analytics"));
+            // Continue an established campaign, comparing current quotes rather than fixed target levels.
+            const candidate = division.numAdVerts < 2 || advertCost <= wilsonCost ?
+                { name: "AdVert", kind: "advert", division: division.name, level: division.numAdVerts, cost: advertCost } :
+                { name: "Wilson Analytics", division: division.name, level, cost: wilsonCost };
+            if (candidate.cost > 0 && candidate.cost <= budget) status.selected = { ...candidate, budgetClass: "scaling", budgetLimit: budget };
+            if (status.selected) break;
+        }
+        if (evidence.demandStreak >= settings.stableSettlements || office.size < CONFIG.round1OfficeSize || !soldThrough || office.numEmployees !== office.size || office.size >= ceiling) continue;
+        const increase = Math.min(settings.officeStep, ceiling - office.size);
+        const cost = call("getOfficeSizeUpgradeCost", () => ns.corporation.getOfficeSizeUpgradeCost(division.name, city, increase));
+        if (Number.isFinite(cost) && cost > 0 && cost <= budget) {
+            status.selected = { name: "Office", kind: "office", division: division.name, city, fromSize: office.size,
+                increase, cost, ceiling, budgetClass: "scaling" };
+            break;
+        }
+    }
+    status.blocker = status.selected ? null : "Health, capacity, sell-through or quoted cost holds scaling";
+    return status;
+}
+
+export function deployProductionScaling(ns, call, plan, candidate) {
+    const live = call("getCorporation", () => ns.corporation.getCorporation());
+    const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
+    const excess = Math.max(0, live.funds - operatingReserve(live.expenses, seconds, live.revenue));
+    const budget = Math.max(0, excess - 2 * tobaccoInvestment(excess)) * CONFIG.scaling.cashFraction;
+    if (live.nextState !== "PURCHASE" || !(live.revenue > live.expenses) || plan.blocker) return null;
+    if (candidate.kind !== "office") return buyRankedUpgrade(ns, call, { ...candidate, budgetLimit: Math.min(candidate.budgetLimit, budget) });
+    const office = call("getOffice", () => ns.corporation.getOffice(candidate.division, candidate.city));
+    const warehouse = call("getWarehouse", () => ns.corporation.getWarehouse(candidate.division, candidate.city));
+    const round = live.public ? 5 : call("getInvestmentOffer", () => ns.corporation.getInvestmentOffer()).round;
+    const ceiling = live.public ? CONFIG.scaling.publicOfficeCeiling : round >= 4 ? CONFIG.scaling.postRound3OfficeCeiling : CONFIG.scaling.privateOfficeCeiling;
+    const cost = call("getOfficeSizeUpgradeCost", () => ns.corporation.getOfficeSizeUpgradeCost(candidate.division, candidate.city, candidate.increase));
+    if (office.size !== candidate.fromSize || office.numEmployees !== office.size || office.size + candidate.increase > ceiling ||
+        candidate.increase <= 0 || !Number.isInteger(candidate.increase) || candidate.increase > CONFIG.scaling.officeStep ||
+        Math.min(office.avgEnergy,office.avgMorale) < CONFIG.scaling.minimumHealth ||
+        warehouse.sizeUsed / warehouse.size >= CONFIG.scaling.maximumOfficeFill || !Number.isFinite(cost) || cost <= 0 || cost > budget) return null;
+    call("upgradeOfficeSize", () => ns.corporation.upgradeOfficeSize(candidate.division,candidate.city,candidate.increase));
+    const after = call("getOffice", () => ns.corporation.getOffice(candidate.division,candidate.city));
+    if (after.size !== office.size + candidate.increase || !cashMatches(call("getCorporation", () => ns.corporation.getCorporation()).funds,live.funds-cost)) {
+        throw new Error("Scaling office purchase did not match quote and size");
+    }
+    const division = call("getDivision", () => ns.corporation.getDivision(candidate.division));
+    staffRampOffice(ns,call,division.name,candidate.city,after,division.industry === CONFIG.starter.industry ? RAMP_JOBS : CONFIG.tobacco.jobs);
+    return { ...candidate, cost, size: after.size };
+}
+
+export function reconcileResearchBanks(ns, call, purchase = false, previous = []) {
+    const live = call("getCorporation", () => ns.corporation.getCorporation());
+    const names = [...new Set(managedSites(ns,call,live.divisions).map(site => site.division.name))];
+    return names.map(name => {
+        let division = call("getDivision", () => ns.corporation.getDivision(name));
+        const points = division.researchPoints;
+        const pending = MARKET_TA_RESEARCH.filter(research => !call("hasResearched", () => ns.corporation.hasResearched(name,research)));
+        const costs = pending.map(research => call("getResearchCost", () => ns.corporation.getResearchCost(name,research)));
+        if (costs.some(cost => !Number.isFinite(cost) || cost < 0)) throw new Error("Invalid research quote for " + name);
+        const totalCost = costs.reduce((a,b)=>a+b,0);
+        const reserve = CONFIG.tobacco.researchReserve;
+        const old = previous.find(item => item.division === name);
+        const gained = old ? Math.max(0,points-old.points) : null;
+        const purchased = [];
+        // Bank the whole prerequisite chain plus reserve. Retry from hasResearched after interruption.
+        if (purchase && live.nextState === "PURCHASE" && points >= totalCost + reserve) for (const research of pending) {
+            const current = call("getDivision", () => ns.corporation.getDivision(name));
+            const cost = call("getResearchCost", () => ns.corporation.getResearchCost(name,research));
+            if (current.researchPoints - cost < reserve) break;
+            call("research " + research, () => ns.corporation.research(name,research));
+            division = call("getDivision", () => ns.corporation.getDivision(name));
+            if (!call("hasResearched", () => ns.corporation.hasResearched(name,research)) || division.researchPoints < reserve) {
+                throw new Error("Research purchase or reserve did not verify for " + name);
+            }
+            purchased.push(research);
+        }
+        const remainingCost = pending.filter(research => !purchased.includes(research)).reduce((sum,research) =>
+            sum + call("getResearchCost", () => ns.corporation.getResearchCost(name,research)),0);
+        const gap = Math.max(0,remainingCost+reserve-division.researchPoints);
+        return { division: name, points: division.researchPoints, reserve, pending: pending.filter(research => !purchased.includes(research)),
+            totalCost: remainingCost, gap, gainedPerSettlement: gained, settlementsToTA: gained > 0 ? Math.ceil(gap/gained) : null,
+            purchased, spent: points-division.researchPoints, ready: remainingCost === 0 };
+    });
+}

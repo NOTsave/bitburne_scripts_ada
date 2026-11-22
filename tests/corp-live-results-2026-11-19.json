@@ -1,0 +1,1561 @@
+{
+  "shutdown-restart": {
+    "mode": "shutdown-restart",
+    "checks": [
+      "live purchase cleanup",
+      "Smart Supply disabled",
+      "earning orders preserved",
+      "startup stale-order recovery",
+      "three settled restart observations"
+    ],
+    "funds": 84949568311.67233,
+    "revenue": 5141.126938347305,
+    "expenses": 3719.629053736623,
+    "ram": 871.8,
+    "settlement": {
+      "number": 3,
+      "fullCycles": 2,
+      "revenue": 5141.126938347305,
+      "expenses": 3719.629053736623,
+      "funds": 84949568311.67233,
+      "fundsChange": 14214.97883605957,
+      "operatingFundsChange": 14214.97883605957,
+      "profitStreak": 1,
+      "ramped": false,
+      "rampProfitStreak": 0,
+      "fundingReady": false,
+      "materialPurchases": {
+        "seconds": 10,
+        "inputs": 21140.358037365884,
+        "boosts": 0,
+        "total": 21140.358037365884,
+        "items": [
+          {
+            "name": "Water",
+            "quantity": 3.501483556550024,
+            "spend": 5369.0936944844625,
+            "orderRate": 0.3501483556550024,
+            "receivedRate": 0.3501483556550024
+          },
+          {
+            "name": "Chemicals",
+            "quantity": 1.4005934226200099,
+            "spend": 15771.26434288142,
+            "orderRate": 0.14005934226200098,
+            "receivedRate": 0.14005934226200098
+          },
+          {
+            "name": "Hardware",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          },
+          {
+            "name": "Robots",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          },
+          {
+            "name": "AI Cores",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          },
+          {
+            "name": "Real Estate",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          }
+        ]
+      },
+      "production": {
+        "division": "Agri",
+        "seconds": 10,
+        "inputs": [
+          {
+            "name": "Water",
+            "before": 10,
+            "unitsPerOutput": 0.5,
+            "remaining": 6.498507148467242
+          },
+          {
+            "name": "Chemicals",
+            "before": 4,
+            "unitsPerOutput": 0.2,
+            "remaining": 2.599402859386897
+          }
+        ],
+        "inputCapacity": 20,
+        "outputUnits": 7.002985703065515
+      },
+      "productInputs": null,
+      "agricultureInputs": [
+        {
+          "division": "Agri",
+          "city": "Sector-12",
+          "stocks": [
+            {
+              "name": "Water",
+              "before": 10,
+              "after": 6.498507148467242
+            },
+            {
+              "name": "Chemicals",
+              "before": 4,
+              "after": 2.599402859386897
+            }
+          ],
+          "office": {
+            "size": 3,
+            "employees": 3,
+            "jobs": {
+              "Operations": 1,
+              "Engineer": 1,
+              "Business": 1,
+              "Management": 0,
+              "Research & Development": 0,
+              "Intern": 0,
+              "Unassigned": 0
+            }
+          },
+          "plants": {
+            "rate": 0.7002985703065515,
+            "exports": []
+          },
+          "boosts": [
+            {
+              "name": "Hardware",
+              "stored": 0
+            },
+            {
+              "name": "Robots",
+              "stored": 0
+            },
+            {
+              "name": "AI Cores",
+              "stored": 0
+            },
+            {
+              "name": "Real Estate",
+              "stored": 0
+            }
+          ]
+        }
+      ],
+      "treasury": {
+        "netBurn": 0,
+        "reserve": 5000000000,
+        "projectedProductSpend": 7994956831.167233,
+        "runwaySeconds": null,
+        "runwayAfterProductSeconds": null
+      },
+      "development": null,
+      "office": {
+        "jobs": {
+          "Operations": 1,
+          "Engineer": 1,
+          "Business": 1,
+          "Management": 0,
+          "Research & Development": 0,
+          "Intern": 0,
+          "Unassigned": 0
+        },
+        "energy": 100,
+        "morale": 100
+      }
+    },
+    "sites": [
+      {
+        "division": "Agri",
+        "city": "Sector-12",
+        "warehouse": {
+          "level": 1,
+          "city": "Sector-12",
+          "size": 100,
+          "sizeUsed": 0.454895500392707,
+          "smartSupplyEnabled": false
+        },
+        "office": {
+          "city": "Sector-12",
+          "size": 3,
+          "maxEnergy": 100,
+          "maxMorale": 100,
+          "numEmployees": 3,
+          "avgEnergy": 100,
+          "avgMorale": 100,
+          "totalExperience": 222.40000000002328,
+          "employeeProductionByJob": {
+            "total": 621.6000000000232,
+            "Operations": 224.86666666667443,
+            "Engineer": 256.4666666666783,
+            "Business": 140.26666666667055,
+            "Management": 0,
+            "Research & Development": 0,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "employeeJobs": {
+            "Operations": 1,
+            "Engineer": 1,
+            "Business": 1,
+            "Management": 0,
+            "Research & Development": 0,
+            "Intern": 0,
+            "Unassigned": 0
+          }
+        },
+        "materials": [
+          {
+            "name": "Water",
+            "buy": 0,
+            "stored": 6.498507148467242,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -0.35014928515327576,
+            "exports": []
+          },
+          {
+            "name": "Chemicals",
+            "buy": 0,
+            "stored": 2.599402859386897,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -0.1400597140613103,
+            "exports": []
+          },
+          {
+            "name": "Plants",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.405138",
+            "sold": 0.7002985703065515,
+            "produced": 0.7002985703065515,
+            "exports": []
+          },
+          {
+            "name": "Hardware",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Robots",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "AI Cores",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Real Estate",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Food",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.506423",
+            "sold": 0.7002985703065515,
+            "produced": 0.7002985703065515,
+            "exports": []
+          }
+        ]
+      }
+    ]
+  },
+  "package-hold": {
+    "mode": "package-hold",
+    "checks": [
+      "Round 3 package correctly held on Round 1 save"
+    ],
+    "funds": 84948379123.89055,
+    "revenue": 0,
+    "expenses": 1606.1332500000358,
+    "ram": 871.8,
+    "sites": [
+      {
+        "division": "Agri",
+        "city": "Sector-12",
+        "warehouse": {
+          "level": 1,
+          "city": "Sector-12",
+          "size": 100,
+          "sizeUsed": 1.1102230246251566e-17,
+          "smartSupplyEnabled": false
+        },
+        "office": {
+          "city": "Sector-12",
+          "size": 3,
+          "maxEnergy": 100,
+          "maxMorale": 100,
+          "numEmployees": 3,
+          "avgEnergy": 100,
+          "avgMorale": 100,
+          "totalExperience": 222.76000000002387,
+          "employeeProductionByJob": {
+            "total": 621.9600000000239,
+            "Operations": 224.9866666666746,
+            "Engineer": 256.6466666666786,
+            "Business": 140.32666666667063,
+            "Management": 0,
+            "Research & Development": 0,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "employeeJobs": {
+            "Operations": 1,
+            "Engineer": 1,
+            "Business": 1,
+            "Management": 0,
+            "Research & Development": 0,
+            "Intern": 0,
+            "Unassigned": 0
+          }
+        },
+        "materials": [
+          {
+            "name": "Water",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Chemicals",
+            "buy": 0,
+            "stored": 2.220446049250313e-16,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Plants",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.405138",
+            "sold": 0,
+            "produced": 0.599401000399277,
+            "exports": []
+          },
+          {
+            "name": "Hardware",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Robots",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "AI Cores",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Real Estate",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Food",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.506423",
+            "sold": 0,
+            "produced": 0.599401000399277,
+            "exports": []
+          }
+        ]
+      }
+    ]
+  },
+  "pressure": {
+    "mode": "pressure",
+    "checks": [
+      "real warehouse upgrade through shared pressure handler"
+    ],
+    "funds": 83800605196.93925,
+    "revenue": 5164.029907667384,
+    "expenses": 3770.0275093682367,
+    "ram": 871.8,
+    "result": [
+      {
+        "division": "Agri",
+        "city": "Sector-12",
+        "cost": 1144900000,
+        "upgraded": true,
+        "blocker": null
+      }
+    ],
+    "sites": [
+      {
+        "division": "Agri",
+        "city": "Sector-12",
+        "warehouse": {
+          "level": 2,
+          "city": "Sector-12",
+          "size": 200,
+          "sizeUsed": 0.20943533019210905,
+          "smartSupplyEnabled": false
+        },
+        "office": {
+          "city": "Sector-12",
+          "size": 3,
+          "maxEnergy": 100,
+          "maxMorale": 100,
+          "numEmployees": 3,
+          "avgEnergy": 100,
+          "avgMorale": 100,
+          "totalExperience": 223.62850000002527,
+          "employeeProductionByJob": {
+            "total": 622.8285000000252,
+            "Operations": 225.2761666666751,
+            "Engineer": 257.0809166666793,
+            "Business": 140.47141666667088,
+            "Management": 0,
+            "Research & Development": 0,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "employeeJobs": {
+            "Operations": 1,
+            "Engineer": 1,
+            "Business": 1,
+            "Management": 0,
+            "Research & Development": 0,
+            "Intern": 0,
+            "Unassigned": 0
+          }
+        },
+        "materials": [
+          {
+            "name": "Water",
+            "buy": 0,
+            "stored": 2.991933288458701,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -0.35040379971577434,
+            "exports": []
+          },
+          {
+            "name": "Chemicals",
+            "buy": 0,
+            "stored": 1.1967733153834803,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -0.14016151988630973,
+            "exports": []
+          },
+          {
+            "name": "Plants",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.405623",
+            "sold": 0.7008075994315487,
+            "produced": 0.7008075994315487,
+            "exports": []
+          },
+          {
+            "name": "Hardware",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Robots",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "AI Cores",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Real Estate",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Food",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.507029",
+            "sold": 0.7008075994315487,
+            "produced": 0.7008075994315487,
+            "exports": []
+          }
+        ]
+      }
+    ]
+  },
+  "supervised-restart": {
+    "mode": "supervised-restart",
+    "checks": [
+      "supervisor relaunched the manager",
+      "exactly one Corporation writer",
+      "three supervised settled observations",
+      "CEO holdings preserved"
+    ],
+    "funds": 23933923149.689186,
+    "revenue": 35307.46814205886,
+    "expenses": 27741.576367310587,
+    "ram": 871.8,
+    "settlement": {
+      "number": 3,
+      "fullCycles": 2,
+      "revenue": 35307.46814205886,
+      "expenses": 27741.576367310587,
+      "funds": 23933923149.689186,
+      "fundsChange": 75658.91774749756,
+      "operatingFundsChange": 75658.91774749756,
+      "profitStreak": 2,
+      "ramped": true,
+      "rampProfitStreak": 2,
+      "fundingReady": false,
+      "materialPurchases": {
+        "seconds": 10,
+        "inputs": 67635.95589119456,
+        "boosts": 0,
+        "total": 67635.95589119456,
+        "items": [
+          {
+            "name": "Water",
+            "quantity": 11.447311827480597,
+            "spend": 17599.75449871132,
+            "orderRate": 1.1447311827480597,
+            "receivedRate": 1.1447311827480597
+          },
+          {
+            "name": "Chemicals",
+            "quantity": 4.578924730992238,
+            "spend": 50036.20139248324,
+            "orderRate": 0.4578924730992238,
+            "receivedRate": 0.4578924730992238
+          },
+          {
+            "name": "Hardware",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          },
+          {
+            "name": "Robots",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          },
+          {
+            "name": "AI Cores",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          },
+          {
+            "name": "Real Estate",
+            "quantity": 0,
+            "spend": 0,
+            "orderRate": 0,
+            "receivedRate": 0
+          }
+        ]
+      },
+      "production": {
+        "division": "Agri",
+        "seconds": 10,
+        "inputs": [
+          {
+            "name": "Water",
+            "before": 34.493700775452275,
+            "unitsPerOutput": 0.5,
+            "remaining": 23.012625161566387
+          },
+          {
+            "name": "Chemicals",
+            "before": 13.797480310180912,
+            "unitsPerOutput": 0.2,
+            "remaining": 9.205050064626557
+          }
+        ],
+        "inputCapacity": 68.98740155090455,
+        "outputUnits": 22.962151227771777
+      },
+      "productInputs": {
+        "division": "Tobacco",
+        "city": "Sector-12",
+        "stocks": [
+          {
+            "name": "Plants",
+            "before": 20,
+            "after": 20,
+            "target": 20,
+            "ordered": 0,
+            "lastImport": 0
+          }
+        ],
+        "smartSupply": false,
+        "exportUnlocked": false,
+        "exportSettlements": 0
+      },
+      "agricultureInputs": [
+        {
+          "division": "Agri",
+          "city": "Sector-12",
+          "stocks": [
+            {
+              "name": "Water",
+              "before": 34.493700775452275,
+              "after": 23.012625161566387
+            },
+            {
+              "name": "Chemicals",
+              "before": 13.797480310180912,
+              "after": 9.205050064626557
+            }
+          ],
+          "office": {
+            "size": 9,
+            "employees": 9,
+            "jobs": {
+              "Operations": 3,
+              "Engineer": 3,
+              "Business": 1,
+              "Management": 1,
+              "Research & Development": 1,
+              "Intern": 0,
+              "Unassigned": 0
+            }
+          },
+          "plants": {
+            "rate": 2.296215122777178,
+            "exports": []
+          },
+          "boosts": [
+            {
+              "name": "Hardware",
+              "stored": 0.17770717228449057
+            },
+            {
+              "name": "Robots",
+              "stored": 0.02132486067413887
+            },
+            {
+              "name": "AI Cores",
+              "stored": 0.10662430337069437
+            },
+            {
+              "name": "Real Estate",
+              "stored": 10.662430337069434
+            }
+          ]
+        },
+        {
+          "division": "Agri",
+          "city": "Aevum",
+          "stocks": [
+            {
+              "name": "Water",
+              "before": 34.750563787270565,
+              "after": 23.184030388782794
+            },
+            {
+              "name": "Chemicals",
+              "before": 13.900225514908225,
+              "after": 9.273612155513117
+            }
+          ],
+          "office": {
+            "size": 9,
+            "employees": 9,
+            "jobs": {
+              "Operations": 3,
+              "Engineer": 3,
+              "Business": 1,
+              "Management": 1,
+              "Research & Development": 1,
+              "Intern": 0,
+              "Unassigned": 0
+            }
+          },
+          "plants": {
+            "rate": 2.3133066796975545,
+            "exports": []
+          },
+          "boosts": [
+            {
+              "name": "Hardware",
+              "stored": 0.1922248267744801
+            },
+            {
+              "name": "Robots",
+              "stored": 0.023066979212937624
+            },
+            {
+              "name": "AI Cores",
+              "stored": 0.11533489606468807
+            },
+            {
+              "name": "Real Estate",
+              "stored": 11.533489606468807
+            }
+          ]
+        }
+      ],
+      "treasury": {
+        "netBurn": 0,
+        "reserve": 5000000000,
+        "projectedProductSpend": 0,
+        "runwaySeconds": null,
+        "runwayAfterProductSeconds": null
+      },
+      "development": {
+        "name": "Tobacco-1795122658266",
+        "city": "Sector-12",
+        "progress": 21.09943882831786,
+        "delta": 0.16022064852515427,
+        "speed": 0.16031860306082102,
+        "samples": [
+          0.16041655759648776,
+          0.16022064852515427
+        ],
+        "cyclesRemaining": 493,
+        "office": {
+          "jobs": {
+            "Operations": 2,
+            "Engineer": 3,
+            "Business": 1,
+            "Management": 2,
+            "Research & Development": 1,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "morale": 94.08692305195841,
+          "energy": 94.84816683180921
+        },
+        "gameSecondsRemaining": 4930
+      },
+      "office": {
+        "jobs": {
+          "Operations": 3,
+          "Engineer": 3,
+          "Business": 1,
+          "Management": 1,
+          "Research & Development": 1,
+          "Intern": 0,
+          "Unassigned": 0
+        },
+        "energy": 91.46495525788939,
+        "morale": 92.16230382965628
+      }
+    },
+    "sites": [
+      {
+        "division": "Agri",
+        "city": "Sector-12",
+        "warehouse": {
+          "level": 2,
+          "city": "Sector-12",
+          "size": 200,
+          "sizeUsed": 1.6961832040062028,
+          "smartSupplyEnabled": false
+        },
+        "office": {
+          "city": "Sector-12",
+          "size": 9,
+          "maxEnergy": 100,
+          "maxMorale": 100,
+          "numEmployees": 9,
+          "avgEnergy": 91.46495525788939,
+          "avgMorale": 92.16230382965628,
+          "totalExperience": 677.015000000029,
+          "employeeProductionByJob": {
+            "total": 1880.2126328564498,
+            "Operations": 597.9453308107131,
+            "Engineer": 677.6916528404299,
+            "Business": 121.04069372892326,
+            "Management": 246.2306342371086,
+            "Research & Development": 237.3043212392748,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "employeeJobs": {
+            "Operations": 3,
+            "Engineer": 3,
+            "Business": 1,
+            "Management": 1,
+            "Research & Development": 1,
+            "Intern": 0,
+            "Unassigned": 0
+          }
+        },
+        "materials": [
+          {
+            "name": "Water",
+            "buy": 1.1430601680091275,
+            "stored": 23.012625161566387,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -1.148107561388589,
+            "exports": []
+          },
+          {
+            "name": "Chemicals",
+            "buy": 0.45722406720365105,
+            "stored": 9.205050064626557,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -0.4592430245554356,
+            "exports": []
+          },
+          {
+            "name": "Plants",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.957850",
+            "sold": 2.296215122777178,
+            "produced": 2.296215122777178,
+            "exports": []
+          },
+          {
+            "name": "Hardware",
+            "buy": 0.0003778738523868102,
+            "stored": 0.17770717228449057,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Robots",
+            "buy": 0.00004534486228641723,
+            "stored": 0.02132486067413887,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "AI Cores",
+            "buy": 0.0002267243114320861,
+            "stored": 0.10662430337069437,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Real Estate",
+            "buy": 0.02267243114320861,
+            "stored": 10.662430337069434,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Food",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+1.197313",
+            "sold": 2.296215122777178,
+            "produced": 2.296215122777178,
+            "exports": []
+          }
+        ]
+      },
+      {
+        "division": "Agri",
+        "city": "Aevum",
+        "warehouse": {
+          "level": 1,
+          "city": "Aevum",
+          "size": 100,
+          "sizeUsed": 1.715150044066546,
+          "smartSupplyEnabled": false
+        },
+        "office": {
+          "city": "Aevum",
+          "size": 9,
+          "maxEnergy": 100,
+          "maxMorale": 100,
+          "numEmployees": 9,
+          "avgEnergy": 92.40583987092486,
+          "avgMorale": 92.8922665872253,
+          "totalExperience": 672.9035000000031,
+          "employeeProductionByJob": {
+            "total": 1905.777770998028,
+            "Operations": 603.1551653571072,
+            "Engineer": 669.665716079058,
+            "Business": 128.51377825542403,
+            "Management": 261.7772524885483,
+            "Research & Development": 242.66585881789055,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "employeeJobs": {
+            "Operations": 3,
+            "Engineer": 3,
+            "Business": 1,
+            "Management": 1,
+            "Research & Development": 1,
+            "Intern": 0,
+            "Unassigned": 0
+          }
+        },
+        "materials": [
+          {
+            "name": "Water",
+            "buy": 1.1515569806680523,
+            "stored": 23.184030388782794,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -1.1566533398487773,
+            "exports": []
+          },
+          {
+            "name": "Chemicals",
+            "buy": 0.46062279226722114,
+            "stored": 9.273612155513117,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": -0.4626613359395109,
+            "exports": []
+          },
+          {
+            "name": "Plants",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+0.955266",
+            "sold": 2.3133066796975545,
+            "produced": 2.3133066796975545,
+            "exports": []
+          },
+          {
+            "name": "Hardware",
+            "buy": 0.0003856752123827719,
+            "stored": 0.1922248267744801,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Robots",
+            "buy": 0.00004628102548593262,
+            "stored": 0.023066979212937624,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "AI Cores",
+            "buy": 0.0002314051274296631,
+            "stored": 0.11533489606468807,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Real Estate",
+            "buy": 0.02314051274296631,
+            "stored": 11.533489606468807,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Food",
+            "buy": 0,
+            "stored": 0,
+            "sell": "MAX",
+            "price": "MP+1.194083",
+            "sold": 2.3133066796975545,
+            "produced": 2.3133066796975545,
+            "exports": []
+          }
+        ]
+      },
+      {
+        "division": "Tobacco",
+        "city": "Sector-12",
+        "warehouse": {
+          "level": 1,
+          "city": "Sector-12",
+          "size": 100,
+          "sizeUsed": 1,
+          "smartSupplyEnabled": false
+        },
+        "office": {
+          "city": "Sector-12",
+          "size": 9,
+          "maxEnergy": 100,
+          "maxMorale": 100,
+          "numEmployees": 9,
+          "avgEnergy": 94.84816683180921,
+          "avgMorale": 94.08692305195841,
+          "totalExperience": 639.849500000003,
+          "employeeProductionByJob": {
+            "total": 2034.8267929367114,
+            "Operations": 424.1761293396382,
+            "Engineer": 717.2119839076179,
+            "Business": 125.74122202856968,
+            "Management": 516.0533806366202,
+            "Research & Development": 251.64407702426556,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "employeeJobs": {
+            "Operations": 2,
+            "Engineer": 3,
+            "Business": 1,
+            "Management": 2,
+            "Research & Development": 1,
+            "Intern": 0,
+            "Unassigned": 0
+          }
+        },
+        "materials": [
+          {
+            "name": "Water",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Chemicals",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Plants",
+            "buy": 0,
+            "stored": 20,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Hardware",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Robots",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "AI Cores",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Real Estate",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          },
+          {
+            "name": "Food",
+            "buy": 0,
+            "stored": 0,
+            "sell": 0,
+            "price": "",
+            "sold": 0,
+            "produced": 0,
+            "exports": []
+          }
+        ]
+      }
+    ]
+  },
+  "final": {
+    "hash": "a29b5151",
+    "length": 148432,
+    "normalThreshold": true,
+    "ram": 871.8,
+    "corp": {
+      "name": "adada",
+      "funds": 23737467077.81328,
+      "revenue": 35635.21599639937,
+      "expenses": 30390.986466211933,
+      "public": false,
+      "totalShares": 1500000000,
+      "numShares": 1000000000,
+      "shareSaleCooldown": 0,
+      "investorShares": 500000000,
+      "issuedShares": 0,
+      "issueNewSharesCooldown": 0,
+      "sharePrice": 18.071610387358334,
+      "dividendRate": 0,
+      "tributeModifier": 0.15,
+      "dividendEarnings": 0,
+      "nextState": "SALE",
+      "prevState": "EXPORT",
+      "divisions": [
+        "Agri",
+        "Tobacco"
+      ],
+      "valuation": 21437700000
+    },
+    "processes": [
+      {
+        "filename": "corp-supervisor.js",
+        "threads": 1,
+        "args": [],
+        "pid": 8371,
+        "temporary": false
+      },
+      {
+        "filename": "corp.js",
+        "threads": 1,
+        "args": [
+          "--apply",
+          "--preset",
+          "auto",
+          "--ramp-office",
+          "--office-care",
+          "--products",
+          "--manual-supply",
+          "--tobacco-growth",
+          "--fund-chain"
+        ],
+        "pid": 8376,
+        "temporary": false
+      }
+    ],
+    "h": {
+      "pid": 8376,
+      "preset": "auto",
+      "stage": "EXPAND",
+      "blocker": null,
+      "cycles": 127,
+      "reserve": 5000000000,
+      "round": 1,
+      "lastSettlement": {
+        "number": 128,
+        "fullCycles": 127,
+        "revenue": 35635.21599639937,
+        "expenses": 30390.986466211933,
+        "funds": 23737467077.81328,
+        "fundsChange": 52442.29530334473,
+        "operatingFundsChange": 52442.29530334473,
+        "profitStreak": 10,
+        "ramped": true,
+        "rampProfitStreak": 10,
+        "fundingReady": false,
+        "materialPurchases": {
+          "seconds": 10,
+          "inputs": 69953.29616684283,
+          "boosts": 12976.77299935363,
+          "total": 82930.06916619647,
+          "items": [
+            {
+              "name": "Water",
+              "quantity": 11.49928875978489,
+              "spend": 17756.5563028508,
+              "orderRate": 1.149928875978489,
+              "receivedRate": 1.149928875978489
+            },
+            {
+              "name": "Chemicals",
+              "quantity": 4.599715503913956,
+              "spend": 52196.739863992036,
+              "orderRate": 0.4599715503913956,
+              "receivedRate": 0.4599715503913956
+            },
+            {
+              "name": "Hardware",
+              "quantity": 0.0026435945295081864,
+              "spend": 21.849051908474305,
+              "orderRate": 0.0002643594529508172,
+              "receivedRate": 0.00026435945295081865
+            },
+            {
+              "name": "Robots",
+              "quantity": 0.00031723134354098154,
+              "spend": 22.2052082606765,
+              "orderRate": 0.00003172313435409806,
+              "receivedRate": 0.000031723134354098154
+            },
+            {
+              "name": "AI Cores",
+              "quantity": 0.0015861567177049007,
+              "spend": 27.748261896128845,
+              "orderRate": 0.00015861567177049033,
+              "receivedRate": 0.00015861567177049006
+            },
+            {
+              "name": "Real Estate",
+              "quantity": 0.15861567177049096,
+              "spend": 12904.97047728835,
+              "orderRate": 0.015861567177049028,
+              "receivedRate": 0.015861567177049098
+            }
+          ]
+        },
+        "production": {
+          "division": "Agri",
+          "seconds": 10,
+          "inputs": [
+            {
+              "name": "Water",
+              "before": 34.63316801277618,
+              "unitsPerOutput": 0.5,
+              "remaining": 23.103880992049675
+            },
+            {
+              "name": "Chemicals",
+              "before": 13.853267205110473,
+              "unitsPerOutput": 0.2,
+              "remaining": 9.24155239681987
+            }
+          ],
+          "inputCapacity": 69.26633602555236,
+          "outputUnits": 23.058574041453017
+        },
+        "productInputs": {
+          "division": "Tobacco",
+          "city": "Sector-12",
+          "stocks": [
+            {
+              "name": "Plants",
+              "before": 20,
+              "after": 20,
+              "target": 20,
+              "ordered": 0,
+              "lastImport": 0
+            }
+          ],
+          "smartSupply": false,
+          "exportUnlocked": false,
+          "exportSettlements": 0
+        },
+        "agricultureInputs": [
+          {
+            "division": "Agri",
+            "city": "Sector-12",
+            "stocks": [
+              {
+                "name": "Water",
+                "before": 34.63316801277618,
+                "after": 23.103880992049675
+              },
+              {
+                "name": "Chemicals",
+                "before": 13.853267205110473,
+                "after": 9.24155239681987
+              }
+            ],
+            "office": {
+              "size": 9,
+              "employees": 9,
+              "jobs": {
+                "Operations": 3,
+                "Engineer": 3,
+                "Business": 1,
+                "Management": 1,
+                "Research & Development": 1,
+                "Intern": 0,
+                "Unassigned": 0
+              }
+            },
+            "plants": {
+              "rate": 2.3058574041453017,
+              "exports": []
+            },
+            "boosts": [
+              {
+                "name": "Hardware",
+                "stored": 0.4049933209290492
+              },
+              {
+                "name": "Robots",
+                "stored": 0.048599198511485885
+              },
+              {
+                "name": "AI Cores",
+                "stored": 0.2429959925574296
+              },
+              {
+                "name": "Real Estate",
+                "stored": 24.29959925574295
+              }
+            ]
+          },
+          {
+            "division": "Agri",
+            "city": "Aevum",
+            "stocks": [
+              {
+                "name": "Water",
+                "before": 34.91730646865691,
+                "after": 23.293432401336048
+              },
+              {
+                "name": "Chemicals",
+                "before": 13.966922587462765,
+                "after": 9.31737296053442
+              }
+            ],
+            "office": {
+              "size": 9,
+              "employees": 9,
+              "jobs": {
+                "Operations": 3,
+                "Engineer": 3,
+                "Business": 1,
+                "Management": 1,
+                "Research & Development": 1,
+                "Intern": 0,
+                "Unassigned": 0
+              }
+            },
+            "plants": {
+              "rate": 2.324774813464172,
+              "exports": []
+            },
+            "boosts": [
+              {
+                "name": "Hardware",
+                "stored": 0.42770787797156
+              },
+              {
+                "name": "Robots",
+                "stored": 0.051324945356587215
+              },
+              {
+                "name": "AI Cores",
+                "stored": 0.25662472678293613
+              },
+              {
+                "name": "Real Estate",
+                "stored": 25.66247267829359
+              }
+            ]
+          }
+        ],
+        "treasury": {
+          "netBurn": 0,
+          "reserve": 5000000000,
+          "projectedProductSpend": 0,
+          "runwaySeconds": null,
+          "runwayAfterProductSeconds": null
+        },
+        "development": {
+          "name": "Tobacco-1795122658266",
+          "city": "Sector-12",
+          "progress": 40.57837989390982,
+          "delta": 0.15851761461298963,
+          "speed": 0.15938874588006655,
+          "samples": [
+            0.16026301730791204,
+            0.16006824951077192,
+            0.15987415188045873,
+            0.15967939670944276,
+            0.15948476915975363,
+            0.15929025519275086,
+            0.15909653110714572,
+            0.15890333173852866,
+            0.15871014158091157,
+            0.15851761461298963
+          ],
+          "cyclesRemaining": 373,
+          "office": {
+            "jobs": {
+              "Operations": 2,
+              "Engineer": 3,
+              "Business": 1,
+              "Management": 2,
+              "Research & Development": 1,
+              "Intern": 0,
+              "Unassigned": 0
+            },
+            "morale": 93.37194757262215,
+            "energy": 92.18182867605064
+          },
+          "gameSecondsRemaining": 3730
+        },
+        "office": {
+          "jobs": {
+            "Operations": 3,
+            "Engineer": 3,
+            "Business": 1,
+            "Management": 1,
+            "Research & Development": 1,
+            "Intern": 0,
+            "Unassigned": 0
+          },
+          "energy": 90.88005414503071,
+          "morale": 90.16493691630455
+        }
+      },
+      "productStatus": {
+        "division": "Tobacco",
+        "researchPoints": 63.56305537159781,
+        "researchReserve": 10000,
+        "products": [
+          {
+            "name": "Tobacco-1795122658266",
+            "progress": 40.57837989390982,
+            "sold": 0,
+            "produced": 0
+          }
+        ],
+        "action": null,
+        "blocker": null
+      }
+    }
+  },
+  "expectedCorpHash": "a29b5151",
+  "notes": {
+    "pressureThresholdInTestCopy": 0.001,
+    "canonicalThreshold": 0.8,
+    "round3PositiveSpend": "Not yet eligible on the active Round 1 save; coverage-bound positive path remains fixture-verified",
+    "exports": "Export unlock is absent on this save; preservation of active routes is fixture-verified"
+  },
+  "finalOverview": {
+    "source": "Observed Steam Corporation overview after the final Netscript snapshot",
+    "fundsDisplay": "$23.345b",
+    "revenueDisplay": "$37.218k/s",
+    "expensesDisplay": "$30.939k/s",
+    "profitDisplay": "$6.278k/s",
+    "ceoSharesDisplay": "1.000b",
+    "totalSharesDisplay": "1.500b",
+    "public": false
+  }
+}
