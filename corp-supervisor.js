@@ -3,7 +3,7 @@ const CONFIG_FILE = "corp-supervisor.config.txt";
 export const DEFAULT_CORP_HEADROOM = 32;
 const RETRY_MS = 30_000;
 const POLL_MS = 2_000;
-const DEFAULTS = { preset: "auto", headroom: DEFAULT_CORP_HEADROOM, funding: "off", growth: "off", supply: "auto", scaling: false, capital: "auto", launcher: "standalone" };
+const DEFAULTS = { preset: "auto", headroom: DEFAULT_CORP_HEADROOM, headroomMode: "fixed", headroomFraction: 0.02, headroomMin: 8, headroomMax: 32, funding: "off", growth: "off", supply: "auto", scaling: false, capital: "auto", launcher: "standalone" };
 const FUNDING_FLAGS = { off: null, round1: "--fund-round-1", chain: "--fund-chain", all: "--fund" };
 const GROWTH_FLAGS = { off: null, campaign: "--tobacco-growth", ranked: "--upgrades" };
 
@@ -20,12 +20,29 @@ export function readCorporationSupervisorConfig(ns, overrides = {}) {
     const config = { ...DEFAULTS, ...saved, ...overrides };
     if (!["auto", "bn3", "self-funded"].includes(config.preset) ||
         !Object.hasOwn(FUNDING_FLAGS, config.funding) || !Object.hasOwn(GROWTH_FLAGS, config.growth) ||
-        !["auto", "manual"].includes(config.supply) || typeof config.scaling !== "boolean" || !["auto", "off"].includes(config.capital) || !["standalone", "daemon"].includes(config.launcher) || !Number.isFinite(config.headroom) || config.headroom < 0) {
+        !["auto", "manual"].includes(config.supply) || typeof config.scaling !== "boolean" || !["auto", "off"].includes(config.capital) || !["standalone", "daemon"].includes(config.launcher) || !Number.isFinite(config.headroom) || config.headroom < 0 || !["fixed", "proportional"].includes(config.headroomMode) ||
+        !Number.isFinite(config.headroomFraction) || config.headroomFraction < 0 || config.headroomFraction > 1 ||
+        !Number.isFinite(config.headroomMin) || config.headroomMin < 0 || !Number.isFinite(config.headroomMax) || config.headroomMax < config.headroomMin) {
         throw new Error("Invalid corporation supervisor configuration");
     }
     return config;
 }
 
+
+export function effectiveCorporationHeadroom(config, totalRam) {
+ return config.headroomMode === 'proportional' ? Math.max(config.headroomMin,Math.min(config.headroomMax,totalRam*config.headroomFraction)) : config.headroom;
+}
+export function createCorporationConfigReader(overrides={}) {
+ let previous,valid;
+ return ns=>{
+  const raw=ns.read(CONFIG_FILE);
+  if(raw===previous && valid)return valid;
+  previous=raw;
+  try{valid=readCorporationSupervisorConfig({read:()=>raw},overrides);}
+  catch(error){if(!valid)throw error;ns.print('[corp supervisor] Keeping last valid profile: '+error.message);}
+  return valid;
+ };
+}
 
 export function siblingScript(ns, name) {
  const current=canonical(ns.getScriptName?.()??'corp-supervisor.js');
@@ -36,7 +53,7 @@ export const corporationOptionSchema=[["corp-funding","config"],["corp-headroom"
 export function corporationOverrides(flags){
  const result={};
  if(flags['corp-funding']!==undefined&&flags['corp-funding']!=='config')result.funding=flags['corp-funding'];
- if(flags['corp-headroom']!==undefined&&flags['corp-headroom']!==-1)result.headroom=flags['corp-headroom'];
+ if(flags['corp-headroom']!==undefined&&flags['corp-headroom']!==-1){result.headroom=flags['corp-headroom'];result.headroomMode='fixed';}
  if(flags['corp-launcher']!==undefined&&flags['corp-launcher']!=='config')result.launcher=flags['corp-launcher'];
  return result;
 }
@@ -47,11 +64,12 @@ export function corporationWriterKind(filename){
  return null;
 }
 export function planCorporationRam(script,measured,processes,headroom){
- const workers=processes.filter(p=>corporationWriterKind(p.filename)==='manager').sort((a,b)=>a.pid-b.pid);
+ const observers=processes.filter(p=>corporationWriterKind(p.filename)==='manager'&&!(p.args??[]).includes('--apply'));
+ const workers=processes.filter(p=>corporationWriterKind(p.filename)==='manager'&&(p.args??[]).includes('--apply')).sort((a,b)=>a.pid-b.pid);
  const legacy=processes.filter(p=>corporationWriterKind(p.filename)==='legacy');
  const worker=workers[0],pid=worker?.pid??0,target=measured>0?measured+headroom:0;
  return {script:canonical(script),workerScript:worker&&canonical(worker.filename),measured,pid,
-  running:Boolean(worker&&(worker.args??[]).includes('--apply')),dryRun:Boolean(worker&&!(worker.args??[]).includes('--apply')),
+  running:Boolean(worker&&(worker.args??[]).includes('--apply')),dryRun:false,observers:observers.map(p=>p.pid),
   writerCount:workers.filter(p=>(p.args??[]).includes('--apply')).length+legacy.length,legacy:legacy.map(p=>p.pid),
   target,reserved:pid&&target?headroom:target};
 }
@@ -68,27 +86,48 @@ export function corporationController(processes,node){
   Number(canonical(b.filename).split('/').pop()!=='daemon.js')||a.pid-b.pid)[0]??null;
 }
 export function createCorporationLauncher(){
- let nextAttemptAt=0;
+ let nextAttemptAt=0,trackedPid=0,startedAt=0,failures=0,previousArgs=null,pendingRestart=false;
+ const crashDelay=()=>Math.min(300_000,RETRY_MS*2**Math.max(0,failures-1));
  return (ns,config,stale,getFreeRam)=>{
   const processes=ns.ps('home');
-  const plan=planCorporationRam(stale.script??SCRIPT,stale.measured,processes,config.headroom);
+  const headroom=effectiveCorporationHeadroom(config,ns.getServerMaxRam?.('home')??0);
+  const plan=planCorporationRam(stale.script??SCRIPT,stale.measured,processes,headroom);
   const owner=corporationController(processes,ns.getResetInfo?.().currentNode??0);
   if(owner&&ns.pid&&owner.pid!==ns.pid)return {...plan,state:'delegated',controllerPid:owner.pid};
   if(plan.legacy.length)return {...plan,state:'legacy-controller'};
   if(plan.writerCount>1)return {...plan,state:'multiple-writers'};
-  if(plan.dryRun)return {...plan,state:'dry-run'};
+
   if(plan.running&&plan.workerScript!==plan.script)return {...plan,state:'other-installation'};
-  if(plan.running)return {...plan,state:'running'};
-  if(!plan.target)return {...plan,state:'missing-script'};
-  const now=Date.now();if(now<nextAttemptAt)return {...plan,state:'backoff',nextAttemptAt};nextAttemptAt=now+RETRY_MS;
-  const free=getFreeRam();if(free<plan.target)return {...plan,state:'low-ram',free,nextAttemptAt};
   const args=['--apply','--preset',config.preset,'--ramp-office','--office-care','--products'];
   if(config.capital==='off')args.push('--capital-off');
   if(config.scaling)args.push('--scale-production');
   if(config.supply==='manual')args.push('--manual-supply');
   if(GROWTH_FLAGS[config.growth])args.push(GROWTH_FLAGS[config.growth]);
   if(FUNDING_FLAGS[config.funding])args.push(FUNDING_FLAGS[config.funding]);
-  const pid=ns.exec(plan.script,'home',1,...args);return {...plan,pid,state:pid?'launched':'exec-failed',free,nextAttemptAt};
+  const now=Date.now(),signature=JSON.stringify(args);
+  if(previousArgs!==null && previousArgs!==signature)pendingRestart=true;
+  previousArgs=signature;
+  if(plan.running){
+   if(pendingRestart){
+    if(!ns.kill(plan.pid))return {...plan,state:'restart-failed'};
+    pendingRestart=false;trackedPid=0;nextAttemptAt=0;
+    return {...plan,state:'reconfiguring'};
+   }
+   if(trackedPid!==plan.pid){trackedPid=plan.pid;startedAt=now;}
+   if(now-startedAt>=120_000)failures=0;
+   return {...plan,state:'running',failures};
+  }
+  if(trackedPid){
+   failures=now-startedAt<120_000?failures+1:0;trackedPid=0;
+   nextAttemptAt=Math.max(nextAttemptAt,now+(failures?crashDelay():RETRY_MS));
+  }
+  if(!plan.target)return {...plan,state:'missing-script'};
+  if(now<nextAttemptAt)return {...plan,state:'backoff',nextAttemptAt,failures};
+  nextAttemptAt=now+RETRY_MS;
+  const free=getFreeRam();if(free<plan.target)return {...plan,state:'low-ram',free,nextAttemptAt,failures};
+  const pid=ns.exec(plan.script,'home',1,...args);
+  if(pid){trackedPid=pid;startedAt=now;pendingRestart=false;}else{failures++;nextAttemptAt=now+crashDelay();}
+  return {...plan,pid,state:pid?'launched':'exec-failed',free,nextAttemptAt,failures};
  };
 }
 export function createCorporationSupervisor(){
@@ -116,33 +155,27 @@ export async function runCorporationSupervisor(ns, overrides = {}) {
         ns.tprint("[corp supervisor] Run on home.");
         return;
     }
+    const readConfig=createCorporationConfigReader(overrides);
     let config;
-    try {
-        config = readCorporationSupervisorConfig(ns, overrides);
-    } catch (error) {
-        ns.tprint("[corp supervisor] " + error.message);
-        return;
-    }
-    if(config.launcher==='daemon'){
-        const script=siblingScript(ns,'daemon.js');let nextAttempt=0;
-        for(;;){
+    try {config=readConfig(ns);}catch(error){ns.tprint('[corp supervisor] '+error.message);return;}
+    const supervise=createCorporationSupervisor();
+    let lastState,nextDaemonAttempt=0;
+    for (;;) {
+        config=readConfig(ns);
+        if(config.launcher==='daemon'){
+            const script=siblingScript(ns,'daemon.js');
             const existing=ns.ps('home').find(p=>canonical(p.filename)===script&&!(p.args??[]).includes('--corp-only'));
             if(existing){ns.tprint('[corp callback] Attached to full daemon PID '+existing.pid);return;}
-            if(Date.now()>=nextAttempt){
-                nextAttempt=Date.now()+RETRY_MS;
+            if(Date.now()>=nextDaemonAttempt){
+                nextDaemonAttempt=Date.now()+RETRY_MS;
                 const ram=ns.getScriptRam(script,'home');
                 if(ram>0&&ns.getServerMaxRam('home')-ns.getServerUsedRam('home')>=ram){
                     const pid=ns.exec(script,'home',1,'--corp','--no-tail-windows');
                     if(pid){ns.tprint('[corp callback] Started full daemon PID '+pid);return;}
                 }
             }
-            await ns.sleep(POLL_MS);
+            await ns.sleep(POLL_MS);continue;
         }
-    }
-    ns.tprint("[corp supervisor] " + config.preset + " preset, " + config.headroom.toFixed(2) + " GB headroom.");
-    const supervise = createCorporationSupervisor();
-    let lastState;
-    for (;;) {
         const result = supervise(ns, config);
         if(result.state === "delegated"){ns.tprint("[corp supervisor] Delegated to launcher PID "+result.controllerPid);return;}
         recordCorporationAttachment(ns,result,ns.getResetInfo());

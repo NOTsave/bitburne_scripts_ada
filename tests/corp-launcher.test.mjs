@@ -18,8 +18,8 @@ test('full daemon and standalone elect one launcher even with a stale empty-work
  assert.equal(corporationController(processes,3).pid,3);
 });
 
-test('observer, other-installation and legacy Corporation processes block a second writer',()=>{
- for(const [process,state]of [[{filename:'corp.js',pid:8,args:[]},'dry-run'],[{filename:'other/corp.js',pid:8,args:['--apply']},'other-installation'],[{filename:'Corp/corp-hr.js',pid:8,args:[]},'legacy-controller']]){
+test('other-installation and legacy Corporation writers block a second writer',()=>{
+ for(const [process,state]of [[{filename:'other/corp.js',pid:8,args:['--apply']},'other-installation'],[{filename:'Corp/corp-hr.js',pid:8,args:[]},'legacy-controller']]){
   let launched=0;const ns={ps:()=>[process],exec:()=>launched++};
   assert.equal(createCorporationLauncher()(ns,config(),planCorporationRam('corp.js',900,[],32),()=>4096).state,state);assert.equal(launched,0);
  }
@@ -47,7 +47,7 @@ test('argument-free callback attaches to the full daemon and never launches anot
  let execs=0;const ns={getHostname:()=> 'home',read:()=>'{"launcher":"daemon"}',getScriptName:()=> 'corp-supervisor.js',
   ps:()=>[{filename:'daemon.js',pid:2,args:['--corp']},worker],tprint:()=>{},exec:()=>execs++};
  await runCorporationSupervisor(ns);assert.equal(execs,0);
- assert.deepEqual(corporationOverrides({'corp-funding':'chain','corp-headroom':32,'corp-launcher':'daemon'}),{funding:'chain',headroom:32,launcher:'daemon'});
+ assert.deepEqual(corporationOverrides({'corp-funding':'chain','corp-headroom':32,'corp-launcher':'daemon'}),{funding:'chain',headroom:32,headroomMode:'fixed',launcher:'daemon'});
 });
 
 test('Autopilot preserves enable and opt-out arguments without mutating existing looping-mode flags',()=>{
@@ -83,4 +83,26 @@ test('a corrupt attachment journal cannot prevent the elected launcher from reco
  let file='broken';const ns={pid:2,getScriptName:()=> 'daemon.js',ps:()=>[worker],
   read:p=>p==='corp-launcher-state.txt'?file:JSON.stringify({pid:10,timestamp:200,stage:'STEADY'}),write:(_p,value)=>file=value};
  assert.equal(recordCorporationAttachment(ns,{pid:10},{currentNode:3,lastAugReset:100,lastNodeReset:1}).writerCount,1);
+});
+
+
+test('an earlier observer does not block launch or adoption and reserves full worker RAM',()=>{
+ const observer={filename:'corp.js',pid:1,args:[]},ps=[observer];let execs=0;
+ const ns={ps:()=>ps,exec:(file,host,threads,...args)=>{execs++;ps.push({filename:file,pid:5,args});return 5;}};
+ const stale=planCorporationRam('corp.js',900,ps,32);
+ assert.equal(stale.pid,0);assert.equal(stale.reserved,932);assert.deepEqual(stale.observers,[1]);
+ const launch=createCorporationLauncher();assert.equal(launch(ns,config(),stale,()=>1000).state,'launched');
+ const adopted=launch(ns,config(),stale,()=>1000);assert.equal(adopted.pid,5);assert.equal(adopted.state,'running');assert.equal(execs,1);
+});
+
+test('observer and writer use separate heartbeats while active writer ignores lower observer PID',async()=>{
+ for(const apply of [false,true]){
+  const paths=[],args=apply?['--apply','--capital-off']:[];
+  const ns={pid:2,args,getHostname:()=> 'home',getScriptName:()=> 'corp.js',ps:()=>[{filename:'corp.js',pid:1,args:apply?[]:['--apply']}],
+   getResetInfo:()=>({currentNode:3}),getBitNodeMultipliers:()=>({CorporationValuation:1}),
+   corporation:{hasCorporation:()=>false,canCreateCorporation:()=> 'NoSf3OrDisabled'},atExit:()=>{},
+   print:()=>{},tprint:()=>{},write:(path)=>paths.push(path),sleep:async()=>{throw Error('STOP');}};
+  await assert.rejects(corporationMain(ns),/STOP/);
+  assert.deepEqual(paths,[apply?'/Temp/corp-status.txt':'/Temp/corp-observer-2.txt']);
+ }
 });

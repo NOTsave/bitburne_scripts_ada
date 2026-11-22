@@ -180,12 +180,12 @@ export async function main(ns) {
     const pid = ns.pid;
     const filename = call("getScriptName", () => ns.getScriptName()).replace(/^\//, "");
     const processes = call("ps", () => ns.ps("home"));
-    if (processes.some(p => p.filename.split("/").pop() === "corp.js" && p.pid < pid)) {
+    if (apply && processes.some(p => p.filename.split("/").pop() === "corp.js" && p.pid < pid && (p.args ?? []).includes("--apply"))) {
         call("print", () => ns.print(prefix + "Another instance owns the heartbeat."));
         return;
     }
 
-    if (processes.some(p => p.pid !== pid && (p.filename.split("/").pop() === "corp-manager.js" || /(^|\/)Corp\/corp-[^/]+\.js$/i.test(p.filename)))) {
+    if (apply && processes.some(p => p.pid !== pid && (p.filename.split("/").pop() === "corp-manager.js" || /(^|\/)Corp\/corp-[^/]+\.js$/i.test(p.filename)))) {
         call("print", () => ns.print(prefix + "A legacy Corporation controller is running; refusing a second writer."));
         return;
     }
@@ -504,7 +504,7 @@ export async function main(ns) {
         }
         if ((completedPhase === "START" && plan.revenue !== null) || changed || now - lastHeartbeat >= CONFIG.heartbeatMs || settled || (cycleFinished && (once || cycles === 1))) {
             try {
-                call("write heartbeat", () => ns.write(CONFIG.heartbeatPath, JSON.stringify(heartbeat) + "\n", "w"));
+                call("write heartbeat", () => ns.write(apply ? CONFIG.heartbeatPath : "/Temp/corp-observer-" + pid + ".txt", JSON.stringify(heartbeat) + "\n", "w"));
                 lastHeartbeat = now;
             } catch (error) {
                 if (changed || now - lastHeartbeat >= CONFIG.heartbeatMs) {

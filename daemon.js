@@ -5,7 +5,7 @@ import {
     tryGetBitNodeMultipliers_Custom, getActiveSourceFiles_Custom,
     getFnRunViaNsExec, tail, autoRetry, getErrorInfo
 } from './helpers.js'
-import { corporationOptionSchema, corporationOverrides, readCorporationSupervisorConfig,
+import { corporationOptionSchema, corporationOverrides, createCorporationConfigReader, effectiveCorporationHeadroom,
     planCorporationRam, createCorporationLauncher, siblingScript, corporationWriterKind, recordCorporationAttachment } from './corp-supervisor.js';
 
 // daemon.js has histocially been the central orchestrator of almost every script in the game.
@@ -114,9 +114,10 @@ export function shouldRunRamManager(singularity, improveHacking, corpTarget, hom
 
 export function corporationBudget(ns, launch, config, script, measured, base, ready, getFreeRam) {
     if (!config || !ready) return { target: 0, reserved: base };
-    const plan = planCorporationRam(script, measured, ns.ps('home'), config.headroom);
+    const headroom=effectiveCorporationHeadroom(config,ns.getServerMaxRam?.('home')??0);
+    const plan = planCorporationRam(script, measured, ns.ps('home'), headroom);
     const result = launch && launch(ns, config, plan, getFreeRam);
-    const reserved = result?.state === 'launched' ? config.headroom : plan.reserved;
+    const reserved = result?.state === 'launched' ? headroom : plan.reserved;
     return { ...plan, ...result, target: plan.target, reserved: base + reserved };
 }
 
@@ -178,11 +179,12 @@ export async function main(ns) {
     let maxPreppingAtMaxTargets = 3; // The max servers we can prep when we're at our current max targets and have spare RAM
     // Allows some home ram to be reserved for ad-hoc terminal script running and when home is explicitly set as the "preferred server" for starting a helper
     let homeReservedRam = 0;
-    let corpConfig, nodeStartedAt, corpResetInfo, corpWorkerRam = 0, corpTarget = 0;
+    let readCorpConfig, corpConfig, nodeStartedAt, corpResetInfo, corpWorkerRam = 0, corpTarget = 0;
     const launchCorp = createCorporationLauncher();
     const corpScript = siblingScript(ns, 'corp.js');
 
     function refreshHomeReserve(launch = false) {
+        if(readCorpConfig){try{corpConfig=readCorpConfig(ns);}catch(error){ns.print("Corporation profile pending repair: "+error.message);}}
         const total = homeServer?.totalRam(true) ?? 0;
         const base = options['reserved-ram'] * (total >= options['double-reserve-threshold'] ? 2 : 1);
         const budget = corporationBudget(ns, launch && launchCorp, corpConfig, corpScript, corpWorkerRam,
@@ -374,9 +376,11 @@ export async function main(ns) {
         nodeStartedAt = resetInfo.lastNodeReset;
         corpResetInfo = resetInfo;
         corpConfig = null;
+        readCorpConfig = null;
         if (corporationEligible(options, bitNodeN, dictSourceFiles, corpScript)) {
             try {
-                corpConfig = readCorporationSupervisorConfig(ns, corporationOverrides(options));
+                readCorpConfig = createCorporationConfigReader(corporationOverrides(options));
+                corpConfig = readCorpConfig(ns);
             } catch (error) {
                 ns.tprint("Corporation management disabled: " + error.message);
             }
