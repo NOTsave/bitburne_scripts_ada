@@ -47,7 +47,7 @@ const CONFIG = {
         exportStockTolerance: 2e-5,
     },
     round1MinimumOffer: 12e9,
-    fundingModel: { horizon: 100, valuationMultiplier: 1, chainMinimumOffer: 5e9, fairFraction: 0.95,
+    fundingModel: { horizon: 100, valuationMultiplierOverride: null, chainMinimumOffer: 5e9, fairFraction: 0.95,
         shareFractions: [0.1, 0.35, 0.25, 0.2], multipliers: [3, 2, 2, 1.5] },
     dualProductFunding: {
         package: "Tobacco product continuity and working capital",
@@ -157,8 +157,10 @@ export async function main(ns) {
     const scaling = ns.args.includes("--scale-production");
     const roundOneAtCost = ns.args.includes("--round-1-at-cost");
     const automaticCapital = CONFIG.market.automatic && !ns.args.includes("--capital-off");
+    let valuationContext;
     const readPlan = readyRound => {
-        const plan = inspect(ns, call, readyRound, products || !apply, preset);
+        valuationContext ??= readValuationContext(ns, call);
+        const plan = { ...inspect(ns, call, readyRound, products || !apply, preset), ...valuationContext };
         return automaticCapital && plan.stage === "GROW" && plan.round > CONFIG.market.privateFundingRounds
             ? { ...plan, stage: "IPO", actions: ["Prepare guarded IPO; deliberately end private funding after Round " + CONFIG.market.privateFundingRounds] } : plan;
     };
@@ -605,6 +607,30 @@ function inspect(ns, call, readyRound, manageExpansion = true, preset = CONFIG.p
     }
 }
 
+// Tagged 3.0.1 fallback keeps formation usable without Source-File 5.
+export function readValuationContext(ns, call) {
+    const reset = call("getResetInfo", () => ns.getResetInfo());
+    const currentNode = reset.currentNode;
+    const override = CONFIG.fundingModel.valuationMultiplierOverride;
+    if (override !== null) {
+        if (!Number.isFinite(override) || override < 0) throw new Error("Invalid valuation multiplier override");
+        return { currentNode, valuationMultiplier: override, valuationSource: "config" };
+    }
+    try {
+        const value = call("getBitNodeMultipliers", () => ns.getBitNodeMultipliers()).CorporationValuation;
+        if (!Number.isFinite(value) || value < 0) throw new Error("Invalid CorporationValuation");
+        return { currentNode, valuationMultiplier: value, valuationSource: "API" };
+    } catch (error) {
+        if (error?.name === "ScriptDeath") throw error;
+        const tagged = { 1: 1, 2: 1, 3: 1, 4: 1, 5: 0.75, 6: 0.2, 7: 0.2, 8: 0,
+            9: 0.5, 10: 0.5, 11: 0.1, 13: 0.001, 14: 0.4, 15: 0.2 };
+        const level = reset.bitNodeOptions?.sourceFileOverrides?.get(12) ?? reset.ownedSF?.get(12) ?? 0;
+        const value = currentNode === 12 ? 1 / Math.pow(1.02, level + 1) : tagged[currentNode];
+        if (!Number.isFinite(value)) throw new Error("Unknown BitNode valuation; configure valuationMultiplierOverride");
+        return { currentNode, valuationMultiplier: value, valuationSource: "3.0.1 fallback" };
+    }
+}
+
 function formationPlan(ns, call, preset = CONFIG.preset) {
     let selfFund = preset === "self-funded";
     let eligibility = call("canCreateCorporation", () => ns.corporation.canCreateCorporation(selfFund));
@@ -841,6 +867,12 @@ function applyBootstrap(ns, call, plan, ramp = false, allowUpgrade = false, manu
         if (!call("hasCorporation", () => ns.corporation.hasCorporation())) {
             throw new Error("Corporation creation did not complete");
         }
+        const created = call("getCorporation", () => ns.corporation.getCorporation());
+        call("print", () => ns.print("[corp formation] " + JSON.stringify({ selfFund,
+            funds: created.funds, ceoShares: created.numShares, totalShares: created.totalShares,
+            investorShares: created.investorShares,
+            officeAPI: call("hasUnlock Office API", () => ns.corporation.hasUnlock("Office API")),
+            warehouseAPI: call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API")) })));
         return true;
     }
     if (plan.blocker?.startsWith("Read failed:")) return false;
@@ -1557,19 +1589,20 @@ function roundOfferFactor(round) {
     return CONFIG.fundingModel.shareFractions[index] * CONFIG.fundingModel.multipliers[index];
 }
 
-function privateCycleValuation(funds, assetGrowthRate, facilityFactor) {
+function privateCycleValuation(funds, assetGrowthRate, facilityFactor, valuationMultiplier) {
     const gross = (10e9 + funds / 3 + Math.max(0, assetGrowthRate) * 315e3) * facilityFactor;
-    return Math.max(10e9, Math.floor(gross / 1e6) * 1e6) * CONFIG.fundingModel.valuationMultiplier;
+    return Math.max(10e9, Math.floor(gross / 1e6) * 1e6) * valuationMultiplier;
 }
 
 function modelFunding(plan, window, growth, round, target) {
     const factor = roundOfferFactor(round);
     const facilities = growth?.facilities ?? 0;
     const facilityFactor = Math.pow(1.1, facilities / 12);
-    const scale = facilityFactor * CONFIG.fundingModel.valuationMultiplier;
+    const valuationMultiplier = plan.valuationMultiplier ?? 1;
+    const scale = facilityFactor * valuationMultiplier;
     // The API exposes a smoothed valuation, so this residual is an implied rate.
     const observations = window.filter(sample => Number.isFinite(sample.valuation) && Number.isFinite(sample.funds));
-    const rates = observations.map(sample => Math.max(0, (sample.valuation / scale - 10e9 - sample.funds / 3) / 315e3));
+    const rates = observations.map(sample => Math.max(0, ((scale > 0 ? sample.valuation / scale : 0) - 10e9 - sample.funds / 3) / 315e3));
     const sorted = [...rates].sort((a, b) => a - b);
     const impliedAssetGrowth = sorted.length ? sorted[Math.floor((sorted.length - 1) / 2)] : null;
     const impliedAssetTrend = offerTrend(rates.map(rate => ({ offerFunds: rate })));
@@ -1577,16 +1610,16 @@ function modelFunding(plan, window, growth, round, target) {
     const historicalValuation = historicalValues.length ? historicalValues[Math.floor((historicalValues.length - 1) / 2)] : plan.valuation;
     // Later rounds use the game's settled valuation, which already includes the BitNode multiplier.
     const expectedValuation = round >= 3 || impliedAssetGrowth === null ? historicalValuation :
-        Math.min(historicalValuation, privateCycleValuation(plan.funds, impliedAssetGrowth, facilityFactor));
+        Math.min(historicalValuation, privateCycleValuation(plan.funds, impliedAssetGrowth, facilityFactor, valuationMultiplier));
     const expectedOffer = Number.isFinite(expectedValuation) ? expectedValuation * factor : null;
     const requiredValuation = target / factor;
-    const normalizedRequirement = requiredValuation / scale - 10e9 - plan.funds / 3;
+    const normalizedRequirement = (scale > 0 ? requiredValuation / scale : Infinity) - 10e9 - plan.funds / 3;
     const horizon = CONFIG.fundingModel.horizon;
     const growthSlope = impliedAssetTrend?.fit >= 0.8 ? impliedAssetTrend.slopePerCycle : 0;
     const operatingProfit = Math.max(0, plan.operatingRate ?? 0) * (plan.secondsPerMarketCycle ?? 0);
     const horizonOffer = impliedAssetGrowth === null ? null : privateCycleValuation(
-        plan.funds + horizon * operatingProfit, impliedAssetGrowth + horizon * growthSlope, facilityFactor) * factor;
-    return { factor, facilities, facilityFactor, impliedAssetGrowth, impliedAssetTrend, expectedOffer,
+        plan.funds + horizon * operatingProfit, impliedAssetGrowth + horizon * growthSlope, facilityFactor, valuationMultiplier) * factor;
+    return { factor, facilities, facilityFactor, valuationMultiplier, impliedAssetGrowth, impliedAssetTrend, expectedOffer,
         expectedValuation, requiredValuation, requiredAssetGrowth: Math.max(0, normalizedRequirement / 315e3),
         horizon, horizonOffer };
 }
@@ -1596,8 +1629,8 @@ function fundingChain(plan, offer, growth, model, rule = CONFIG.round1ScaleUp) {
         !Number.isFinite(plan.valuation)) return null;
     const nextFactor = roundOfferFactor(2);
     const base = Math.min(plan.valuation, model.expectedValuation);
-    const cashEffect = offer.funds / 3 * model.facilityFactor * CONFIG.fundingModel.valuationMultiplier;
-    const cashFundedValue = privateCycleValuation(plan.funds + offer.funds, model.impliedAssetGrowth ?? 0, model.facilityFactor);
+    const cashEffect = offer.funds / 3 * model.facilityFactor * model.valuationMultiplier;
+    const cashFundedValue = privateCycleValuation(plan.funds + offer.funds, model.impliedAssetGrowth ?? 0, model.facilityFactor, model.valuationMultiplier);
     const predictedNextOffer = Math.min(base + cashEffect, cashFundedValue) * nextFactor;
     const combinedCash = plan.funds + offer.funds + predictedNextOffer;
     const required = fundingPackageCost(rule) + plan.reserve;

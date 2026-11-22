@@ -107,7 +107,8 @@ function fixture({ funds = 100e9, adopted = false, publicCorp = false } = {}) {
             return completed;
         },
     };
-    const ns = { corporation: api, pid: 1, args: [], getHostname: () => "home", getScriptName: () => "corp.js",
+    const ns = { getResetInfo: () => ({currentNode:3,ownedSF:new Map()}),
+        getBitNodeMultipliers: () => ({CorporationValuation:1}), corporation: api, pid: 1, args: [], getHostname: () => "home", getScriptName: () => "corp.js",
         ps: () => [{ pid: 1, filename: "corp.js" }], atExit: f => { exitHandler = f; },
         print: s => logs.push(s), tprint: s => logs.push(s),
         write: (_p,s) => heartbeats.push(JSON.parse(s)),
@@ -322,7 +323,7 @@ test("an interrupted export replacement is rebuilt from live routes on restart",
 });
 
 
-test("cold BN3 formation reaches first Agriculture sales within the original corporate budget", async () => {
+function coldFormation({node=3, cash=0, grants=false, eligibility=null}={}) {
     const f=fixture({funds:150e9}); let exists=false;
     f.corp.divisions=[]; f.corp.revenue=0; f.corp.expenses=0; f.setRound(1);
     f.divisions.Agri.cities=["Sector-12"];
@@ -330,10 +331,15 @@ test("cold BN3 formation reaches first Agriculture sales within the original cor
     f.unlocked.clear();
     for(const n of ["Water","Chemicals","Plants","Food"]) Object.assign(f.material("Agri","Sector-12",n),{stored:0,desiredSellAmount:"0",actualSellAmount:0});
     f.api.hasCorporation=()=>exists;
-    f.api.canCreateCorporation=selfFund=>{assert.equal(selfFund,false);return "Success";};
+    let playerCash=cash;
+    f.ns.getResetInfo=()=>({currentNode:node,ownedSF:new Map()});
+    f.ns.getServerMoneyAvailable=()=>playerCash;
+    f.api.canCreateCorporation=selfFund=>eligibility ?? (node!==3 && !selfFund ? "UseSeedMoneyOutsideBN3" : "Success");
     f.api.createCorporation=(_name,selfFund)=>{
-        assert.equal(selfFund,false);exists=true;
-        Object.assign(f.corp,{numShares:1e9,totalShares:1.5e9,investorShares:500e6});
+        assert.equal(selfFund,node!==3);exists=true;
+        if(selfFund){assert.ok(playerCash>=150e9);playerCash-=150e9;}
+        if(grants){f.unlocked.add("Office API");f.unlocked.add("Warehouse API");}
+        Object.assign(f.corp,{numShares:1e9,totalShares:selfFund?1e9:1.5e9,investorShares:selfFund?0:500e6});
         f.mutations.push(["create",selfFund]); return true;
     };
     const industry=f.api.getIndustryData;
@@ -356,13 +362,55 @@ test("cold BN3 formation reaches first Agriculture sales within the original cor
         }
         return advance();
     };
+    return {...f, setCash:value=>{playerCash=value;}, playerCash:()=>playerCash};
+}
+
+for(const grants of [false,true]) test("cold BN3 seed formation bootstraps with " + (grants?"native free APIs":"worst-case paid APIs"), async () => {
+    const f=coldFormation({grants});
     await f.run(["--apply","--manual-supply","--cycles","12"]);
     assert.deepEqual(f.corp.divisions,["Agri"]); assert.equal(f.offices["Agri/Sector-12"].numEmployees,3);
-    assert.ok(f.corp.revenue>f.corp.expenses); assert.ok(f.corp.funds>=5e9 && f.corp.funds<11e9);
+    assert.ok(f.corp.revenue>f.corp.expenses); assert.ok(f.corp.funds>=5e9);
+    assert.ok(grants ? f.corp.funds>100e9 : f.corp.funds<11e9);
     assert.equal(f.corp.numShares,1e9); assert.equal(f.corp.totalShares,1.5e9);
+    assert.equal(f.corp.investorShares,500e6); assert.equal(f.playerCash(),0);
+    assert.equal(f.mutations.filter(m=>m[0]==="create").length,1);
+    assert.equal(f.mutations.filter(m=>["Office API","Warehouse API"].includes(m[0])).length,grants?0:2);
     assert.ok(!f.unlocked.has("Smart Supply")); assert.ok(!f.unlocked.has("Export"));
     assert.ok(f.heartbeats.some(h=>h.stage==="BOOTSTRAP")); assert.ok(f.heartbeats.some(h=>h.stage==="GROW"));
     assert.ok(f.heartbeats.every(h=>!h.blocker),f.logs.join("\n"));
+    assert.ok(f.logs.some(l=>l.startsWith("[corp formation]")));
+});
+
+for(const preset of ["auto","self-funded"]) test(preset+" waits below $150b outside BN3, then creates once and bootstraps",async()=>{
+    const f=coldFormation({node:4,cash:150e9-1});
+    await f.run(["--apply","--preset",preset,"--once"],()=>true);
+    assert.equal(f.mutations.length,0);assert.equal(f.heartbeats.at(-1).stage,"NO_CORP");
+    assert.equal(f.heartbeats.at(-1).blocker,"Waiting for player cash");
+    f.setCash(150e9);
+    await f.run(["--apply","--preset",preset,"--manual-supply","--cycles","12"]);
+    assert.equal(f.playerCash(),0);assert.equal(f.corp.numShares,1e9);
+    assert.equal(f.corp.totalShares,1e9);assert.equal(f.corp.investorShares,0);
+    assert.equal(f.mutations.filter(m=>m[0]==="create").length,1);
+    assert.ok(f.corp.revenue>f.corp.expenses && f.corp.funds>=5e9);
+    await f.run(["--apply","--preset",preset,"--once"],()=>true);
+    assert.equal(f.mutations.filter(m=>m[0]==="create").length,1);
+});
+
+test("seed-only preset and disabled Corporation access never fall through to player-funded creation",async()=>{
+    for(const eligibility of ["UseSeedMoneyOutsideBN3","NoSf3OrDisabled","DisabledBySoftCap"]){
+        const f=coldFormation({node:4,cash:1e15,eligibility});
+        await f.run(["--apply","--preset","bn3","--once"],()=>true);
+        assert.equal(f.mutations.length,0);assert.equal(f.heartbeats.at(-1).blocker,eligibility);
+    }
+});
+
+test("formation rechecks cash immediately before committing and observe mode cannot create",async()=>{
+    const f=coldFormation({node:4,cash:150e9});let reads=0;
+    f.ns.getServerMoneyAvailable=()=>++reads===1?150e9:150e9-1;
+    await f.run(["--apply","--once"],()=>true);
+    assert.equal(f.mutations.length,0);
+    const observed=coldFormation({grants:true});
+    await observed.run(["--once"],()=>true);assert.equal(observed.mutations.length,0);
 });
 
 test("private IPO transition becomes STEADY once and retains all managed city rules", async () => {

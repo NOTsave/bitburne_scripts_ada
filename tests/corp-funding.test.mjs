@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { acceptPlannedFunding, deployRound3Package, fundingDecision } from "../corp.js";
+import { acceptPlannedFunding, deployRound3Package, fundingDecision, readValuationContext } from "../corp.js";
 
 const chain = { fundAll: false, fundRound1: false, fundChain: true };
 const call = (_method, run) => run();
@@ -139,4 +139,35 @@ test("post-Round-3 deployment is bounded and resumes from live unlocks and level
     assert.equal(deployRound3Package(ns, call, plan()), null);
     assert.deepEqual(purchases, steps);
     assert.equal(corp.funds, fundedCash - 34.191016e9);
+});
+
+
+test("valuation context uses live multipliers and supports no-SF5 BN10 and BN12",()=>{
+    const ns={getResetInfo:()=>({currentNode:10,ownedSF:new Map()}),getBitNodeMultipliers:()=>({CorporationValuation:0.5})};
+    assert.deepEqual(readValuationContext(ns,call),{currentNode:10,valuationMultiplier:0.5,valuationSource:"API"});
+    ns.getBitNodeMultipliers=()=>{throw Error("Requires Source-File 5");};
+    assert.equal(readValuationContext(ns,call).valuationMultiplier,0.5);
+    ns.getResetInfo=()=>({currentNode:12,ownedSF:new Map([[12,4]]),bitNodeOptions:{sourceFileOverrides:new Map([[12,2]])}});
+    assert.equal(readValuationContext(ns,call).valuationMultiplier,1/1.02**3);
+    ns.getResetInfo=()=>({currentNode:8});assert.equal(readValuationContext(ns,call).valuationMultiplier,0);
+    ns.getResetInfo=()=>({currentNode:99});assert.throws(()=>readValuationContext(ns,call),/Unknown BitNode/);
+});
+
+test("BN10 chain credit applies the half multiplier once and later quotes stay scaled",()=>{
+    const f=createFixture(),growth=f.growth;const facilities=Math.pow(1.1,growth.facilities/12);
+    const funds=10e9,rate=30000;
+    for(const multiplier of [1,0.5]){
+        const valuation=Math.max(10e9,Math.floor((10e9+funds/3+rate*315e3)*facilities/1e6)*1e6)*multiplier;
+        const offer=valuation*0.3;
+        const plan={...f.plan(),funds,valuation,valuationMultiplier:multiplier,round:1,nextOffer:{round:1,funds:offer,shares:100e6}};
+        const samples=Array.from({length:10},()=>({round:1,funds,valuation,offerFunds:offer,tobaccoSelling:true}));
+        const decision=fundingDecision(plan,samples,3,3,growth,true);
+        assert.equal(decision.model.valuationMultiplier,multiplier);
+        assert.ok(Math.abs(decision.model.impliedAssetGrowth-rate)<5);
+        const expected=(valuation+offer/3*facilities*multiplier)*0.7;
+        assert.ok(Math.abs(decision.chain.predictedNextOffer-expected)<1e6,JSON.stringify(decision.chain));
+        const later=fundingDecision({...plan,round:3,nextOffer:{round:3,funds:valuation*0.5,shares:250e6}},
+            samples.map(s=>({...s,round:3,offerFunds:valuation*0.5})),3,3,growth,true);
+        assert.equal(later.model.expectedOffer,valuation*0.5);
+    }
 });

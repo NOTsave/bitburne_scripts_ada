@@ -27,7 +27,7 @@ For a subfolder install, use the installed path, such as `run scripts/corp-super
 
 The current manager includes guarded production scaling and automatic public-capital policy. With `--apply`, it can take a zero-share IPO after Round 3 and sustained profitable, supplied operation. Dividends compound at 0%, with a configured 5% payout above $50b when healthy; optional new shares repair liquidity shortfalls. Use `--capital-off` (or supervisor `capital: "off"`) to hold automatic capital actions. The selected `launcher: "daemon"` callback attaches to the full daemon; `standalone` runs only the worker supervisor.
 
-See the [Corporation operator guide](corporation-automation-guide.md) and [design/verification notes](corporation-automation-design.md). Run the 54 local checks with `node --test tests/corp-funding.test.mjs tests/corp-reconciliation.test.mjs tests/corp-supervisor.test.mjs tests/corp-launcher.test.mjs`. Actual augmentation reattachment remains pending the next natural install.
+See the [Corporation operator guide](corporation-automation-guide.md) and [design/verification notes](corporation-automation-design.md). Run the 61 local checks with `node --test tests/corp-funding.test.mjs tests/corp-reconciliation.test.mjs tests/corp-supervisor.test.mjs tests/corp-launcher.test.mjs`. Actual augmentation reattachment remains pending the next natural install. P7 formation and BN10 multiplier handling are fixture-verified; natural corporation-free BN3 and eligible non-BN3 live formation remain pending. The P7 manager measures 876.80 GB (908.80 GB including 32 GB headroom).
 
 # Running scripts
 

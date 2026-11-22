@@ -1,0 +1,73 @@
+{
+  "date": "2026-11-22",
+  "gameVersion": "3.0.1 (3162fd2)",
+  "scope": "P7 code, fixtures and adoption restart; natural fresh-formation live exit pending",
+  "hash": "4aa76b28",
+  "ramGB": 876.8,
+  "headroomGB": 32,
+  "launchRequirementGB": 908.8,
+  "tests": {
+    "pass": 61,
+    "fail": 0
+  },
+  "before": {
+    "managerPid": 8,
+    "daemonPid": 4,
+    "funds": 47920638437.260994,
+    "ceoShares": 1000000000,
+    "totalShares": 1500000000,
+    "round": 1,
+    "divisions": [
+      "Agri",
+      "Tobacco"
+    ]
+  },
+  "verified": {
+    "managerPid": 27106,
+    "daemonPid": 4,
+    "writerCount": 1,
+    "standaloneSupervisorCount": 0,
+    "cycles": 185,
+    "stage": "IPO",
+    "blocker": null,
+    "currentNode": 3,
+    "valuationMultiplier": 1,
+    "valuationSource": "API",
+    "sourceHashVerifiedAtCycle": 130
+  },
+  "unchangedReset": {
+    "lastAugReset": 1795284330242,
+    "lastNodeReset": 1794779647522
+  },
+  "autonomousFundingDuringObservation": [
+    {
+      "round": 1,
+      "funds": 8638470000,
+      "transferredShares": 100000000,
+      "nextRound": 2
+    },
+    {
+      "round": 2,
+      "funds": 21853790000,
+      "transferredShares": 350000000,
+      "nextRound": 3
+    },
+    {
+      "round": 3,
+      "funds": 19632050000,
+      "transferredShares": 250000000,
+      "nextRound": 4
+    }
+  ],
+  "pending": [
+    "Natural corporation-free BN3 formation through first profitable Agriculture settlements",
+    "Eligible non-BN3 live self-funded wait and creation",
+    "BN10 live run when available",
+    "Real natural augmentation reattachment receipt"
+  ],
+  "notes": [
+    "Current save already had a corporation; no fresh formation occurred during this check.",
+    "Existing automatic funding and capital policies remained selected.",
+    "An initial read-only diagnostic used unavailable ns.getVersion and failed before making changes; corrected diagnostic succeeded."
+  ]
+}
