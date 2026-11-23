@@ -250,11 +250,11 @@ export async function setStasisLink(ns) {
  * Opens caches on a server (RAM-optimized)
  * 
  * @param {NS} ns - Netscript context
- * @param {string} host - Server hostname
+ * @param {string} fileName - Cache file name (e.g., 'abc123.cache')
  * @returns {Promise<Object>} - Result object
  */
-export async function openCache(ns, host) {
-    return await getNsDataThroughFile(ns, `ns.dnet.openCache('${host}')`, `dnet-cache-${host}.txt`);
+export async function openCache(ns, fileName) {
+    return await getNsDataThroughFile(ns, `ns.dnet.openCache('${fileName}')`, `dnet-cache-${fileName}.txt`);
 }
 
 // ============================================================================
@@ -716,7 +716,7 @@ export async function canAuthenticate(ns, host) {
         }
         
         // Import solvers inline to avoid circular dependency
-        const { puzzleAnswer, isSupported, puzzleCandidates } = await import('./solvers.js');
+        const { puzzleAnswer, isSupported, puzzleCandidates } = await import('../solvers.js');
         
         if (!isSupported(details)) {
             return { canAuth: false, reason: `Unsupported puzzle type: ${details.modelId}` };

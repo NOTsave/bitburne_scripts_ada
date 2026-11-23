@@ -19,7 +19,7 @@ import {
     getNsDataThroughFile
 } from './utils.js';
 
-import { puzzleAnswer, isSupported, puzzleCandidates } from './solvers.js';
+import { puzzleAnswer, isSupported, puzzleCandidates } from '../solvers.js';
 
 // ============================================================================
 // EXPLORATION STATE
