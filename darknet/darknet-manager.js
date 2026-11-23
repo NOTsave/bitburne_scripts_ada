@@ -62,11 +62,11 @@ export const MANAGER_CONFIG = {
 
 /** Argument schema for command-line configuration */
 export const argsSchema = [
-    ['explore', true],
-    ['phish', true],
-    ['stasis', true],
-    ['migrate', true],
-    ['stock', true],
+    ['explore', null],
+    ['phish', null],
+    ['stasis', null],
+    ['migrate', null],
+    ['stock', null],
     ['no-explore', false],
     ['no-phish', false],
     ['no-stasis', false],
@@ -633,14 +633,17 @@ export async function main(ns) {
     const interval = Number(flags.interval) || REPORT_INTERVAL;
     const maxWorkers = Number(flags.maxWorkers) || MANAGER_CONFIG.maxWorkers;
     const workerRam = Number(flags.workerRam) || MANAGER_CONFIG.workerRam;
-    const debug = flags.debug || false;
+    const debug = flags.debug || MANAGER_CONFIG.debug;
     
-    // Handle disable flags
-    const enableExplorer = flags.explore && !flags.noExplore;
-    const enablePhishing = flags.phish && !flags.noPhish;
-    const enableStasis = flags.stasis && !flags.noStasis;
-    const enableMigration = flags.migrate && !flags.noMigrate;
-    const enableStock = flags.stock && !flags.noStock;
+    // Handle enable/disable flags - use defaults from MANAGER_CONFIG if not specified
+    // If flag is explicitly set to true (via --flag), enable it
+    // If flag is explicitly set to false (via --no-flag), disable it
+    // Otherwise use the default from MANAGER_CONFIG
+    const enableExplorer = flags.explore === true ? true : (flags.noExplore ? false : MANAGER_CONFIG.enableExplorer);
+    const enablePhishing = flags.phish === true ? true : (flags.noPhish ? false : MANAGER_CONFIG.enablePhishing);
+    const enableStasis = flags.stasis === true ? true : (flags.noStasis ? false : MANAGER_CONFIG.enableStasis);
+    const enableMigration = flags.migrate === true ? true : (flags.noMigrate ? false : MANAGER_CONFIG.enableMigration);
+    const enableStock = flags.stock === true ? true : (flags.noStock ? false : MANAGER_CONFIG.enableStock);
     
     // Update config
     MANAGER_CONFIG.reportInterval = interval;
@@ -669,11 +672,11 @@ function showHelp(ns) {
     log(ns, '  run darknet/darknet-manager.js [OPTIONS]', false, LOG_LEVELS.INFO);
     log(ns, '', false, LOG_LEVELS.INFO);
     log(ns, 'Options:', false, LOG_LEVELS.INFO);
-    log(ns, '  --explore          Enable explorer workers', false, LOG_LEVELS.INFO);
-    log(ns, '  --phish            Enable phishing workers', false, LOG_LEVELS.INFO);
-    log(ns, '  --stasis           Enable stasis workers', false, LOG_LEVELS.INFO);
-    log(ns, '  --migrate          Enable migration workers', false, LOG_LEVELS.INFO);
-    log(ns, '  --stock            Enable stock promotion workers', false, LOG_LEVELS.INFO);
+    log(ns, '  --explore          Enable explorer workers (default: enabled)', false, LOG_LEVELS.INFO);
+    log(ns, '  --phish            Enable phishing workers (default: enabled)', false, LOG_LEVELS.INFO);
+    log(ns, '  --stasis           Enable stasis workers (default: enabled)', false, LOG_LEVELS.INFO);
+    log(ns, '  --migrate          Enable migration workers (default: enabled)', false, LOG_LEVELS.INFO);
+    log(ns, '  --stock            Enable stock promotion workers (default: enabled)', false, LOG_LEVELS.INFO);
     log(ns, '  --no-explore       Disable explorer workers', false, LOG_LEVELS.INFO);
     log(ns, '  --no-phish         Disable phishing workers', false, LOG_LEVELS.INFO);
     log(ns, '  --no-stasis        Disable stasis workers', false, LOG_LEVELS.INFO);
@@ -689,10 +692,11 @@ function showHelp(ns) {
     log(ns, '  Master controller for Darknet operations', false, LOG_LEVELS.INFO);
     log(ns, '  Coordinates exploration, phishing, stasis, migration, and stock promotion', false, LOG_LEVELS.INFO);
     log(ns, '  RAM Cost: ~0.8GB (manager only)', false, LOG_LEVELS.INFO);
+    log(ns, '  By default, ALL modules are enabled when run without flags', false, LOG_LEVELS.INFO);
     log(ns, '', false, LOG_LEVELS.INFO);
     log(ns, 'Examples:', false, LOG_LEVELS.INFO);
-    log(ns, '  run darknet/darknet-manager.js --explore --phish', false, LOG_LEVELS.INFO);
-    log(ns, '  run darknet/darknet-manager.js --all --debug', false, LOG_LEVELS.INFO);
+    log(ns, '  run darknet/darknet-manager.js                    # All modules enabled', false, LOG_LEVELS.INFO);
+    log(ns, '  run darknet/darknet-manager.js --explore --phish   # Only explore and phish', false, LOG_LEVELS.INFO);
     log(ns, '  run darknet/darknet-manager.js --no-migrate --no-stock', false, LOG_LEVELS.INFO);
 }
 
