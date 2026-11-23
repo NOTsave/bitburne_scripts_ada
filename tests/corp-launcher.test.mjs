@@ -9,8 +9,9 @@ const config=()=>readCorporationSupervisorConfig({read:()=>'{"scaling":true,"cap
 const worker={filename:'corp.js',pid:10,args:['--apply']};
 
 test('full daemon and standalone elect one launcher even with a stale empty-worker plan',()=>{
- const processes=[{filename:'corp-supervisor.js',pid:2,args:[]},{filename:'daemon.js',pid:3,args:['--corp']}];let launched=0;
- const ns={pid:3,ps:()=>processes,getResetInfo:()=>({currentNode:3}),exec:(file,host,threads,...args)=>{processes.push({filename:file,pid:10,args});launched++;return 10;}};
+ const processes=[{filename:'corp-supervisor.js',pid:2,args:[]},{filename:'daemon.js',pid:3,args:['--corp']}];let launched=0,ownership='';
+ const ns={pid:3,ps:()=>processes,getResetInfo:()=>({currentNode:3}),read:()=>ownership,write:(_path,value)=>{ownership=value;},
+  exec:(file,host,threads,...args)=>{processes.push({filename:file,pid:10,args});launched++;return 10;}};
  const stale=planCorporationRam('corp.js',900,[],32),a=createCorporationLauncher(),b=createCorporationLauncher();
  assert.equal(a({...ns,pid:2},config(),stale,()=>4096).state,'delegated');
  assert.equal(a(ns,config(),stale,()=>4096).state,'launched');
@@ -18,10 +19,11 @@ test('full daemon and standalone elect one launcher even with a stale empty-work
  assert.equal(corporationController(processes,3).pid,3);
 });
 
-test('other-installation and legacy Corporation writers block a second writer',()=>{
+test('takeover leaves other installations and legacy Corporation writers alone',()=>{
  for(const [process,state]of [[{filename:'other/corp.js',pid:8,args:['--apply']},'other-installation'],[{filename:'Corp/corp-hr.js',pid:8,args:[]},'legacy-controller']]){
-  let launched=0;const ns={ps:()=>[process],exec:()=>launched++};
-  assert.equal(createCorporationLauncher()(ns,config(),planCorporationRam('corp.js',900,[],32),()=>4096).state,state);assert.equal(launched,0);
+  let launched=0,killed=0;const ns={ps:()=>[process],exec:()=>launched++,kill:()=>killed++};
+  assert.equal(createCorporationLauncher()(ns,{...config(),takeover:true},planCorporationRam('corp.js',900,[],32),()=>4096).state,state);
+  assert.equal(launched,0);assert.equal(killed,0);
  }
 });
 
@@ -87,8 +89,9 @@ test('a corrupt attachment journal cannot prevent the elected launcher from reco
 
 
 test('an earlier observer does not block launch or adoption and reserves full worker RAM',()=>{
- const observer={filename:'corp.js',pid:1,args:[]},ps=[observer];let execs=0;
- const ns={ps:()=>ps,exec:(file,host,threads,...args)=>{execs++;ps.push({filename:file,pid:5,args});return 5;}};
+ const observer={filename:'corp.js',pid:1,args:[]},ps=[observer];let execs=0,ownership='';
+ const ns={ps:()=>ps,read:()=>ownership,write:(_path,value)=>{ownership=value;},
+  exec:(file,host,threads,...args)=>{execs++;ps.push({filename:file,pid:5,args});return 5;}};
  const stale=planCorporationRam('corp.js',900,ps,32);
  assert.equal(stale.pid,0);assert.equal(stale.reserved,932);assert.deepEqual(stale.observers,[1]);
  const launch=createCorporationLauncher();assert.equal(launch(ns,config(),stale,()=>1000).state,'launched');

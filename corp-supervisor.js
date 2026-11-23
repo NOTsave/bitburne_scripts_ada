@@ -1,9 +1,10 @@
 const SCRIPT = "corp.js";
 const CONFIG_FILE = "corp-supervisor.config.txt";
+const WORKER_OWNER_FILE = "/corp-worker-owner.txt";
 export const DEFAULT_CORP_HEADROOM = 32;
 const RETRY_MS = 30_000;
 const POLL_MS = 2_000;
-const DEFAULTS = { preset: "auto", headroom: DEFAULT_CORP_HEADROOM, headroomMode: "fixed", headroomFraction: 0.02, headroomMin: 8, headroomMax: 32, funding: "off", growth: "off", supply: "auto", scaling: false, capital: "auto", launcher: "standalone" };
+const DEFAULTS = { preset: "auto", headroom: DEFAULT_CORP_HEADROOM, headroomMode: "fixed", headroomFraction: 0.02, headroomMin: 8, headroomMax: 32, funding: "off", growth: "off", supply: "auto", scaling: false, capital: "auto", launcher: "standalone", takeover: false };
 const FUNDING_FLAGS = { off: null, round1: "--fund-round-1", chain: "--fund-chain", all: "--fund" };
 const GROWTH_FLAGS = { off: null, campaign: "--tobacco-growth", ranked: "--upgrades" };
 
@@ -22,7 +23,8 @@ export function readCorporationSupervisorConfig(ns, overrides = {}) {
         !Object.hasOwn(FUNDING_FLAGS, config.funding) || !Object.hasOwn(GROWTH_FLAGS, config.growth) ||
         !["auto", "manual"].includes(config.supply) || typeof config.scaling !== "boolean" || !["auto", "off"].includes(config.capital) || !["standalone", "daemon"].includes(config.launcher) || !Number.isFinite(config.headroom) || config.headroom < 0 || !["fixed", "proportional"].includes(config.headroomMode) ||
         !Number.isFinite(config.headroomFraction) || config.headroomFraction < 0 || config.headroomFraction > 1 ||
-        !Number.isFinite(config.headroomMin) || config.headroomMin < 0 || !Number.isFinite(config.headroomMax) || config.headroomMax < config.headroomMin) {
+        !Number.isFinite(config.headroomMin) || config.headroomMin < 0 || !Number.isFinite(config.headroomMax) || config.headroomMax < config.headroomMin ||
+        typeof config.takeover !== "boolean") {
         throw new Error("Invalid corporation supervisor configuration");
     }
     return config;
@@ -85,13 +87,25 @@ export function corporationController(processes,node){
  return candidates.sort((a,b)=>Number(canonical(a.filename).split('/').pop()!=='daemon.js')-
   Number(canonical(b.filename).split('/').pop()!=='daemon.js')||a.pid-b.pid)[0]??null;
 }
+function managedWorkerLaunch(ns, plan, processes) {
+    const raw = ns.read(WORKER_OWNER_FILE);
+    if (!raw) return null;
+    let launch;
+    try { launch = JSON.parse(raw); }
+    catch { return null; }
+    if (launch?.pid !== plan.pid || launch.script !== plan.script ||
+        !Array.isArray(launch.args) || typeof launch.token !== "string" || !launch.token.startsWith("--corp-worker-token=")) return null;
+    const worker = processes.find(process => process.pid === plan.pid);
+    return JSON.stringify(worker?.args) === JSON.stringify([...launch.args, launch.token]) ? launch : null;
+}
+
 export function createCorporationLauncher(){
- let nextAttemptAt=0,trackedPid=0,startedAt=0,failures=0,previousArgs=null,pendingRestart=false;
+ let nextAttemptAt=0,trackedPid=0,startedAt=0,failures=0;
  const crashDelay=()=>Math.min(300_000,RETRY_MS*2**Math.max(0,failures-1));
  return (ns,config,stale,getFreeRam)=>{
   const processes=ns.ps('home');
   const headroom=effectiveCorporationHeadroom(config,ns.getServerMaxRam?.('home')??0);
-  const plan=planCorporationRam(stale.script??SCRIPT,stale.measured,processes,headroom);
+  let plan=planCorporationRam(stale.script??SCRIPT,stale.measured,processes,headroom);
   const owner=corporationController(processes,ns.getResetInfo?.().currentNode??0);
   if(owner&&ns.pid&&owner.pid!==ns.pid)return {...plan,state:'delegated',controllerPid:owner.pid};
   if(plan.legacy.length)return {...plan,state:'legacy-controller'};
@@ -104,18 +118,28 @@ export function createCorporationLauncher(){
   if(config.supply==='manual')args.push('--manual-supply');
   if(GROWTH_FLAGS[config.growth])args.push(GROWTH_FLAGS[config.growth]);
   if(FUNDING_FLAGS[config.funding])args.push(FUNDING_FLAGS[config.funding]);
-  const now=Date.now(),signature=JSON.stringify(args);
-  if(previousArgs!==null && previousArgs!==signature)pendingRestart=true;
-  previousArgs=signature;
+  const now=Date.now();
   if(plan.running){
-   if(pendingRestart){
-    if(!ns.kill(plan.pid))return {...plan,state:'restart-failed'};
-    pendingRestart=false;trackedPid=0;nextAttemptAt=0;
-    return {...plan,state:'reconfiguring'};
+   const launch=managedWorkerLaunch(ns,plan,processes);
+   if(!launch && config.takeover!==true){
+    trackedPid=0;
+    return {...plan,state:'external-worker'};
    }
-   if(trackedPid!==plan.pid){trackedPid=plan.pid;startedAt=now;}
-   if(now-startedAt>=120_000)failures=0;
-   return {...plan,state:'running',failures};
+   if(launch && JSON.stringify(launch.args)===JSON.stringify(args)){
+    if(trackedPid!==plan.pid){trackedPid=plan.pid;startedAt=now;}
+    if(now-startedAt>=120_000)failures=0;
+    return {...plan,state:'running',failures};
+   }
+   const replacementRam=ns.getScriptRam(plan.script,'home');
+   plan=planCorporationRam(plan.script,replacementRam,processes,headroom);
+   const worker=ns.getRunningScript(plan.pid);
+   const free=getFreeRam();
+   if(!plan.target || !worker || free+worker.ramUsage*worker.threads<plan.target){
+    return {...plan,state:'restart-deferred',free};
+   }
+   if(!ns.kill(plan.pid))return {...plan,state:'restart-failed'};
+   plan=planCorporationRam(plan.script,replacementRam,processes.filter(process=>process.pid!==plan.pid),headroom);
+   trackedPid=0;nextAttemptAt=0;
   }
   if(trackedPid){
    failures=now-startedAt<120_000?failures+1:0;trackedPid=0;
@@ -125,8 +149,12 @@ export function createCorporationLauncher(){
   if(now<nextAttemptAt)return {...plan,state:'backoff',nextAttemptAt,failures};
   nextAttemptAt=now+RETRY_MS;
   const free=getFreeRam();if(free<plan.target)return {...plan,state:'low-ram',free,nextAttemptAt,failures};
-  const pid=ns.exec(plan.script,'home',1,...args);
-  if(pid){trackedPid=pid;startedAt=now;pendingRestart=false;}else{failures++;nextAttemptAt=now+crashDelay();}
+  const token='--corp-worker-token='+now+'-'+Math.random().toString(36).slice(2);
+  const pid=ns.exec(plan.script,'home',1,...args,token);
+  if(pid){
+   ns.write(WORKER_OWNER_FILE,JSON.stringify({pid,script:plan.script,args,token}),'w');
+   trackedPid=pid;startedAt=now;
+  }else{failures++;nextAttemptAt=now+crashDelay();}
   return {...plan,pid,state:pid?'launched':'exec-failed',free,nextAttemptAt,failures};
  };
 }

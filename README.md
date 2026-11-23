@@ -21,13 +21,15 @@ The daemon automatically manages the corporation in BN3 once home has at least 3
 
 Both launch modes read `corp-supervisor.config.txt` on home. An invalid profile stops standalone startup or disables Corporation supervision in full daemon; repair the profile before restarting. `--corp-headroom 64` overrides the spare RAM in GB. `--corp-funding off|round1|chain|all` controls private investment offers. The default funding setting is off. The `preset` config field controls formation: `auto` uses seed money in BN3 and can self-fund elsewhere.
 
+Strategy changes restart workers launched by either controller when the replacement and its headroom fit on home. If RAM is tight, the current worker keeps running while the controller waits. The launch record survives routine cleanup and controller reloads. An existing worker with no matching record is reported as `external-worker` and keeps running. To replace that worker with one using the supervisor profile, set `"takeover": true` in `corp-supervisor.config.txt`, then restore it to `false` after the new worker starts. This also applies to workers launched before launch records were introduced.
+
 The Corp row in `stats.js` displays revenue or stage, cycle count, and any blocker. It hides when the last heartbeat is over three minutes old.
 
 For a subfolder install, use the installed path, such as `run scripts/corp-supervisor.js`.
 
 The current manager includes guarded production scaling and automatic public-capital policy. With `--apply`, it can take a zero-share IPO after Round 3 and sustained profitable, supplied operation. Dividends compound at 0%, with a configured 5% payout above $50b when healthy; optional new shares repair liquidity shortfalls. Use `--capital-off` (or supervisor `capital: "off"`) to hold automatic capital actions. The selected `launcher: "daemon"` callback attaches to the full daemon; `standalone` runs only the worker supervisor.
 
-See the [Corporation operator guide](corporation-automation-guide.md) and [design/verification notes](corporation-automation-design.md). Run the 68 local checks with `node --test tests/corp-funding.test.mjs tests/corp-reconciliation.test.mjs tests/corp-supervisor.test.mjs tests/corp-launcher.test.mjs`. Actual augmentation reattachment remains pending the next natural install. P7 formation and BN10 multiplier handling are fixture-verified; natural corporation-free BN3 and eligible non-BN3 live formation remain pending. The P7 manager measures 876.80 GB (908.80 GB including 32 GB headroom).
+See the [Corporation operator guide](corporation-automation-guide.md) and [design/verification notes](corporation-automation-design.md). Run the local checks with `node --test tests/corp-funding.test.mjs tests/corp-reconciliation.test.mjs tests/corp-supervisor.test.mjs tests/corp-launcher.test.mjs`. Actual augmentation reattachment remains pending the next natural install. P7 formation and BN10 multiplier handling are fixture-verified; natural corporation-free BN3 and eligible non-BN3 live formation remain pending. The P7 manager measures 876.80 GB (908.80 GB including 32 GB headroom).
 
 # Running scripts
 

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { main, reconcileManagedPurchases, reconcileWarehousePressure, deployRound3Package, officeJobTargets, careForManagedOffices, planProductionScaling, deployProductionScaling, reconcileResearchBanks, supplySampleHealthy, reconcilePublicFinances, equityIssueSize, updatePreservation, reconcileLiquidation } from "../corp.js";
 
 const call = (_name, run) => run();
@@ -113,9 +114,9 @@ function fixture({ funds = 100e9, adopted = false, publicCorp = false } = {}) {
         print: s => logs.push(s), tprint: s => logs.push(s),
         write: (_p,s) => heartbeats.push(JSON.parse(s)),
         sleep: async () => { if (stop?.()) throw new Error("STOP_FIXTURE"); } };
-    async function run(args, until) {
+    async function run(args, until, runManager = main) {
         ns.args = args.includes("--capital-auto") ? args : [...args,"--capital-off"]; stop = until;
-        try { await main(ns); }
+        try { await runManager(ns); }
         catch (error) { if (error.message !== "STOP_FIXTURE") throw error; }
     }
     const plan = () => ({ ...clone(corp), reserve: 5e9, stage: corp.public ? "STEADY" : "GROW", round,
@@ -446,6 +447,36 @@ test("upkeep does not spend treasury cash at low or negative operating profit", 
         assert.equal(care.internAssignments.length,3);
         assert.ok(!f.mutations.some(([type])=>["tea","party"].includes(type)));
     }
+});
+
+test("paid-care mode holds the funding window through recovery with zero upkeep spend", async () => {
+    const source = await readFile(new URL("../corp.js", import.meta.url), "utf8");
+    const legacy = source.replace("officeInterns: { enabled: true", "officeInterns: { enabled: false");
+    assert.notEqual(legacy, source);
+    const { main: runLegacy } = await import("data:text/javascript;base64," + Buffer.from(legacy).toString("base64"));
+    const f = fixture();
+    const office = f.offices["Agri/Sector-12"];
+    const update = f.api.nextUpdate;
+    let sales = 0;
+    f.api.nextUpdate = async () => {
+        const phase = await update();
+        if (phase === "SALE") {
+            sales++;
+            if (sales === 3) office.avgEnergy = 80;
+            if (sales === 4) office.avgEnergy = 88;
+            if (sales === 5) office.avgEnergy = 96;
+        }
+        return phase;
+    };
+    await f.run(["--apply", "--products", "--office-care", "--cycles", "7"], undefined, runLegacy);
+
+    const settlements = f.heartbeats.filter(beat => beat.completedPhase === "START" && beat.officeCareStatus);
+    const recovery = settlements.findIndex(beat => beat.officeCareStatus.recovering);
+    assert.ok(recovery > 0);
+    assert.ok(settlements[recovery - 1].funding?.samples > 0);
+    assert.deepEqual(settlements.slice(recovery, recovery + 3).map(beat => [
+        beat.officeCareStatus.recovering, beat.officeCareStatus.spent, beat.funding?.samples,
+    ]), [[true, 0, 0], [true, 0, 0], [false, 0, 1]]);
 });
 
 test("200 settled cycles restore office health without recurring paid upkeep or a cash leak", async () => {

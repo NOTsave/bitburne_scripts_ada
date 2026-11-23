@@ -320,7 +320,6 @@ export async function main(ns) {
                         funds: plan.funds });
                     if (valuationWindow.length > CONFIG.valuationSamples) valuationWindow.shift();
                 }
-                carePending = false;
                 funding = fundingDecision(plan, valuationWindow, profitStreak, rampProfitStreak, growth, fundChain);
                 funding.acceptanceEnabled = fundingAuthorized(funding.round, fundingMode);
                 development = readDevelopment(ns, call, plan.divisions, development, Boolean(fullInterval),
@@ -438,15 +437,15 @@ export async function main(ns) {
                     if (officeCare && settlementCount >= 2 && plan.nextState === "START" && !plan.blocker) {
                         const care = careForManagedOffices(ns, call, plan, recoveringOffices, products);
                         officeCareStatus = care;
+                        carePending = care.recovering;
+                        if (carePending) {
+                            valuationWindow = [];
+                            funding = null;
+                        }
                         if (care.spent > 0) {
                             careSpent += care.spent;
                             careSinceSettlement += care.spent;
                             teasBought += care.teas;
-                            carePending = care.recovering;
-                            if (carePending) {
-                                valuationWindow = [];
-                                funding = null;
-                            }
                             plan = readPlan(funding?.ready ? funding.round : null);
                             call("print", () => ns.print(prefix + "Office care paid $" + care.spent.toFixed(0) +
                                 " (" + care.teas + " tea orders, parties $" + care.party.toFixed(0) + ")."));
@@ -1457,8 +1456,16 @@ function formatProductivity(sample) {
 export function careForManagedOffices(ns, call, plan, recovering, manageExpansion) {
     const corp = ns.corporation;
     const totals = { spent: 0, teas: 0, party: 0, recovering: false, budget: 0, internAssignments: [] };
-    if (!plan.divisions?.length || !call("hasUnlock Office API", () => corp.hasUnlock("Office API"))) return totals;
+    if (!plan.divisions?.length) {
+        recovering.clear();
+        return totals;
+    }
+    if (!call("hasUnlock Office API", () => corp.hasUnlock("Office API"))) {
+        totals.recovering = recovering.size > 0;
+        return totals;
+    }
     const sites = managedSites(ns, call, plan.divisions, manageExpansion);
+    const staffedSites = new Set();
     const { teaCostPerEmployee } = call("getConstants", () => corp.getConstants());
     const live = call("getCorporation", () => corp.getCorporation());
     const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
@@ -1470,6 +1477,7 @@ export function careForManagedOffices(ns, call, plan, recovering, manageExpansio
         const office = call("getOffice", () => corp.getOffice(division.name, city));
         if (!office.numEmployees) continue;
         const key = division.name + "/" + city;
+        staffedSites.add(key);
         if (CONFIG.officeInterns.enabled) {
             if (office.numEmployees >= 9) {
                 const base = agriculture ? RAMP_JOBS : CONFIG.tobacco.jobs;
@@ -1489,7 +1497,6 @@ export function careForManagedOffices(ns, call, plan, recovering, manageExpansio
         if (low) recovering.add(key);
         if (office.avgEnergy >= targetEnergy - 1 && office.avgMorale >= targetMorale - 2) recovering.delete(key);
         if (!recovering.has(key)) continue;
-        totals.recovering ||= low;
         const teaCost = office.numEmployees * teaCostPerEmployee;
         if (office.avgEnergy < targetEnergy - 1 && budget - totals.spent >= teaCost &&
             call("buyTea", () => corp.buyTea(division.name, city))) {
@@ -1506,6 +1513,10 @@ export function careForManagedOffices(ns, call, plan, recovering, manageExpansio
             }
         }
     }
+    for (const key of recovering) {
+        if (!staffedSites.has(key)) recovering.delete(key);
+    }
+    totals.recovering = recovering.size > 0;
     return totals;
 }
 

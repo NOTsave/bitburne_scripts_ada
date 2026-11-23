@@ -117,8 +117,8 @@ export function corporationBudget(ns, launch, config, script, measured, base, re
     const headroom=effectiveCorporationHeadroom(config,ns.getServerMaxRam?.('home')??0);
     const plan = planCorporationRam(script, measured, ns.ps('home'), headroom);
     const result = launch && launch(ns, config, plan, getFreeRam);
-    const reserved = result?.state === 'launched' ? headroom : plan.reserved;
-    return { ...plan, ...result, target: plan.target, reserved: base + reserved };
+    const reserved = result?.state === 'launched' ? headroom : result?.reserved ?? plan.reserved;
+    return { ...plan, ...result, reserved: base + reserved };
 }
 
 export function corporationReady(explicit, total, nodeStartedAt, now = Date.now()) {

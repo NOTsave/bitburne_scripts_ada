@@ -1,26 +1,27 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readCorporationSupervisorConfig,createCorporationSupervisor,createCorporationConfigReader,effectiveCorporationHeadroom} from "../corp-supervisor.js";
+import {main as cleanup} from "../cleanup.js";
 test("scaling profile is explicit, validated, and preserves funding and supply modes",()=>{
  const ns={read:()=>JSON.stringify({scaling:true,funding:"chain",supply:"manual",growth:"campaign"})};
  const c=readCorporationSupervisorConfig(ns);assert.equal(c.scaling,true);assert.equal(c.headroom,32);
- let args;const run={getScriptRam:()=>950,ps:()=>[],getServerMaxRam:()=>2048,getServerUsedRam:()=>0,exec:(...a)=>{args=a;return 123;}};
+ let args;const run={getScriptRam:()=>950,ps:()=>[],getServerMaxRam:()=>2048,getServerUsedRam:()=>0,write:()=>{},exec:(...a)=>{args=a;return 123;}};
  assert.equal(createCorporationSupervisor()(run,c).state,"launched");
  for(const a of ["--scale-production","--fund-chain","--manual-supply","--office-care"])assert.ok(args.includes(a));
  for(const a of ["--ipo","--equity","--fund"])assert.ok(!args.includes(a));
  assert.throws(()=>readCorporationSupervisorConfig({read:()=>'{"scaling":"yes"}'}),/Invalid/);
 });
-test("a low-RAM P4 launch backs off even after RAM is restored and adopts an existing manager",()=>{
+test("a low-RAM P4 launch backs off even after RAM is restored and detects an external manager",()=>{
  const c=readCorporationSupervisorConfig({read:()=>'{"scaling":true}'});let free=10,pid=0,execs=0;
- const ns={getScriptRam:()=>950,ps:()=>pid?[{filename:"corp.js",pid,args:["--apply"]}]:[],getServerMaxRam:()=>2048,getServerUsedRam:()=>2048-free,exec:()=>{execs++;return 7;}};
+ const ns={getScriptRam:()=>950,ps:()=>pid?[{filename:"corp.js",pid,args:["--apply"]}]:[],getServerMaxRam:()=>2048,getServerUsedRam:()=>2048-free,read:()=>"",exec:()=>{execs++;return 7;}};
  const supervise=createCorporationSupervisor();assert.equal(supervise(ns,c).state,"low-ram");
  free=2048;assert.equal(supervise(ns,c).state,"backoff");assert.equal(execs,0);
- pid=20;assert.equal(supervise(ns,c).state,"running");assert.equal(execs,0);
+ pid=20;assert.equal(supervise(ns,c).state,"external-worker");assert.equal(execs,0);
 });
 
 test("supervisor enables automatic capital by default and supports an explicit maintenance hold",()=>{
  const c=readCorporationSupervisorConfig({read:()=>""});assert.equal(c.capital,"auto");
- let launched;const ns={getScriptRam:()=>900,ps:()=>[],getServerMaxRam:()=>2048,getServerUsedRam:()=>0,exec:(...args)=>{launched=args;return 1;}};
+ let launched;const ns={getScriptRam:()=>900,ps:()=>[],getServerMaxRam:()=>2048,getServerUsedRam:()=>0,write:()=>{},exec:(...args)=>{launched=args;return 1;}};
  createCorporationSupervisor()(ns,c);assert.ok(!launched.includes("--capital-off"));
  createCorporationSupervisor()(ns,{...c,capital:"off"});assert.ok(launched.includes("--capital-off"));
  assert.throws(()=>readCorporationSupervisorConfig({read:()=>'{"capital":"yes"}'}),/Invalid/);
@@ -37,21 +38,100 @@ test('profile reload retains last valid settings, reapplies overrides, and recov
  assert.throws(()=>createCorporationConfigReader()({read:()=>'{'}));
 });
 
-test('valid strategy reload restarts the same-install worker once, while headroom reload adopts it',()=>{
- let ps=[{filename:'corp.js',pid:10,args:['--apply']}],kills=0,execs=0;
- const ns={getScriptRam:()=>900,ps:()=>ps,getServerMaxRam:()=>4096,getServerUsedRam:()=>0,
-  kill:pid=>{assert.equal(pid,10);kills++;ps=[];return true;},exec:(file,h,t,...args)=>{execs++;ps=[{filename:file,pid:11,args}];return 11;}};
- const supervise=createCorporationSupervisor(),c=readCorporationSupervisorConfig({read:()=>''});
- assert.equal(supervise(ns,c).state,'running');assert.equal(supervise(ns,{...c,headroom:64}).state,'running');
- assert.equal(supervise(ns,{...c,funding:'chain'}).state,'reconfiguring');assert.equal(kills,1);
- assert.equal(supervise(ns,{...c,funding:'chain'}).state,'launched');
- assert.equal(supervise(ns,{...c,funding:'chain'}).state,'running');assert.equal(execs,1);
+function workerFixture(processes = []) {
+ const kills=[], files=new Map();
+ let nextPid=20, otherRam=0, installedRam=900;
+ const ns={getScriptRam:()=>installedRam,ps:()=>processes,getServerMaxRam:()=>1024,
+  getServerUsedRam:()=>otherRam+processes.reduce((sum,process)=>sum+process.ramUsage*process.threads,0),
+  getRunningScript:pid=>processes.find(process=>process.pid===pid)??null,
+  read:path=>files.get(path)??'',write:(path,value)=>files.set(path,value),
+  ls:(_host,filter)=>[...files.keys()].filter(path=>path.includes(filter)),rm:path=>files.delete(path),print:()=>{},
+  kill:pid=>{kills.push(pid);processes.splice(0,1);return true;},
+  exec:(filename,host,threads,...args)=>{
+   const pid=nextPid++;processes.push({filename,pid,args,threads,ramUsage:installedRam});return pid;
+  }};
+ return {ns,kills,files,processes,setOtherRam:ram=>{otherRam=ram;},setInstalledRam:ram=>{installedRam=ram;}};
+}
+
+test('ownership survives cleanup and a new controller only restarts for strategy changes',async()=>{
+ const {ns,kills,processes,files}=workerFixture(),c=readCorporationSupervisorConfig({read:()=>''});
+ assert.equal(createCorporationSupervisor()(ns,c).state,'launched');
+ files.set('/Temp/test-output.txt','temporary');
+ await cleanup(ns);
+ assert.equal(files.has('/Temp/test-output.txt'),false);
+ const supervise=createCorporationSupervisor();
+ assert.equal(supervise(ns,{...c,headroom:64}).state,'running');
+ const next={...c,funding:'chain'};
+ assert.equal(supervise(ns,next).state,'launched');
+ assert.ok(processes[0].args.includes('--fund-chain'));
+ assert.equal(supervise(ns,next).state,'running');
+ assert.deepEqual(kills,[20]);
+});
+
+test('manual workers survive strategy reload until takeover is explicitly enabled',()=>{
+ const manual={filename:'corp.js',pid:10,args:['--apply'],ramUsage:900,threads:1};
+ const {ns,kills,processes}=workerFixture([manual]);
+ const supervise=createCorporationSupervisor();
+ const c=readCorporationSupervisorConfig({read:()=>''});
+ const next={...c,funding:'chain'};
+ assert.equal(supervise(ns,c).state,'external-worker');
+ assert.equal(supervise(ns,next).state,'external-worker');
+ assert.deepEqual(processes,[manual]);
+ assert.deepEqual(kills,[]);
+ assert.throws(()=>readCorporationSupervisorConfig({read:()=> '{"takeover":"true"}'}),/Invalid/);
+ const takeover={...next,takeover:true};
+ assert.equal(supervise(ns,takeover).state,'launched');
+ assert.equal(supervise(ns,next).state,'running');
+ assert.deepEqual(kills,[10]);
+});
+
+test('strategy reload and takeover wait for a runnable replacement before stopping the current worker',()=>{
+ const c=readCorporationSupervisorConfig({read:()=>''});
+ for(const takeover of [false,true]){
+  const manual={filename:'corp.js',pid:10,args:['--apply'],ramUsage:450,threads:2};
+  const fixture=workerFixture(takeover?[manual]:[]), {ns,kills,processes}=fixture;
+  const supervise=createCorporationSupervisor();
+  if(!takeover)assert.equal(supervise(ns,c).state,'launched');
+  const originalPid=processes[0].pid;
+  const next={...c,funding:'chain',takeover};
+  fixture.setInstalledRam(0);
+  assert.equal(supervise(ns,next).state,'restart-deferred');
+  fixture.setInstalledRam(920);
+  fixture.setOtherRam(80);
+  const deferred=supervise(ns,next);
+  assert.equal(deferred.state,'restart-deferred');
+  assert.equal(deferred.target,952);
+  assert.equal(processes[0].pid,originalPid);
+  assert.deepEqual(kills,[]);
+  fixture.setOtherRam(72);
+  assert.equal(supervise(ns,next).state,'launched');
+  assert.equal(processes.length,1);
+  assert.ok(processes[0].args.includes('--fund-chain'));
+  assert.deepEqual(kills,[originalPid]);
+ }
+});
+
+test('missing, corrupt, or mismatched ownership never grants restart authority',()=>{
+ const c=readCorporationSupervisorConfig({read:()=>''});
+ for(const reason of ['missing','corrupt','different token','different args']){
+  const {ns,kills,files,processes}=workerFixture();
+  assert.equal(createCorporationSupervisor()(ns,c).state,'launched');
+  const [path]=files.keys(), args=processes[0].args;
+  if(reason==='missing')files.delete(path);
+  if(reason==='corrupt')files.set(path,'{');
+  if(reason==='different token')args[args.length-1]='--corp-worker-token=old';
+  if(reason==='different args')args[2]='bn3';
+  const result=createCorporationSupervisor()(ns,{...c,funding:'chain'});
+  assert.equal(result.state,'external-worker',reason);
+  assert.deepEqual(kills,[]);
+ }
 });
 
 test('short-lived workers back off 30/60/120/240/300 seconds and reset after healthy uptime',()=>{
- const real=Date.now;let now=1e6,ps=[],pid=1;Date.now=()=>now;
+ const real=Date.now;let now=1e6,ps=[],pid=1,ownership='';Date.now=()=>now;
  try{
   const ns={getScriptRam:()=>900,ps:()=>ps,getServerMaxRam:()=>4096,getServerUsedRam:()=>0,
+   read:()=>ownership,write:(_path,value)=>{ownership=value;},
    exec:(file,h,t,...args)=>{ps=[{filename:file,pid:pid++,args}];return ps[0].pid;}};
   const supervise=createCorporationSupervisor(),c=readCorporationSupervisorConfig({read:()=>''});
   assert.equal(supervise(ns,c).state,'launched');
