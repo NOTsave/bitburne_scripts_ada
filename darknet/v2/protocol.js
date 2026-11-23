@@ -52,6 +52,7 @@ export const RETRY_DELAY = 30_000;
 
 /** Darknet ports */
 export const MANAGER_PORT = 10150;
+export const COLLECTOR_PORT = 10156;
 export const EXPLORER_PORT = 10151;
 export const PHISHING_PORT = 10152;
 export const STASIS_PORT = 10153;
@@ -62,6 +63,14 @@ export const STOCK_PORT = 10155;
 export const PHISHING_COOLDOWN = 60_000;
 export const STOCK_PROMOTE_COOLDOWN = 1000;
 export const MIGRATION_INDUCTION_INTERVAL = 10_000;
+
+/** Data file paths */
+export const MIGRATION_LOG = '/Temp/darknet-migration-log.txt';
+export const PHISHING_LOG = '/Temp/darknet-phishing-log.txt';
+export const STOCK_LOG = '/Temp/darknet-stock-log.txt';
+
+/** Additional timing constants */
+export const STOCK_PROMOTION_INTERVAL = 5000;
 
 /** Log levels */
 export const LOG_LEVELS = {
