@@ -58,6 +58,11 @@ export const STASIS_PORT = 10153;
 export const MIGRATION_PORT = 10154;
 export const STOCK_PORT = 10155;
 
+/** Timing constants for cooldowns */
+export const PHISHING_COOLDOWN = 60_000;
+export const STOCK_PROMOTE_COOLDOWN = 1000;
+export const MIGRATION_INDUCTION_INTERVAL = 10_000;
+
 /** Log levels */
 export const LOG_LEVELS = {
     DEBUG: 0,
@@ -233,6 +238,61 @@ export function isWorthExploring(details) {
  */
 export function canPhish(ns) {
     return ns.getPlayer().skills.charisma >= PHISHING_CONFIG.minCharisma;
+}
+
+/**
+ * Check if a worker is fresh (recently seen)
+ * 
+ * @param {Object} worker - Worker object
+ * @param {number} now - Current timestamp
+ * @returns {boolean} - True if worker is fresh
+ */
+export function isWorkerFresh(worker, now) {
+    if (!worker) return false;
+    const SIGHTING_TTL = 3 * REPORT_INTERVAL;
+    return now - worker.at <= SIGHTING_TTL;
+}
+
+/**
+ * Check if a job is expired
+ * 
+ * @param {Object} job - Job object
+ * @param {number} now - Current timestamp
+ * @returns {boolean} - True if job is expired
+ */
+export function isJobExpired(job, now) {
+    if (!job) return true;
+    return now > job.expires;
+}
+
+/**
+ * Check if a file is a cache file
+ * 
+ * @param {string} file - Filename
+ * @returns {boolean} - True if it's a cache file
+ */
+export function isCacheFile(file) {
+    return file.endsWith('.cache');
+}
+
+/**
+ * Check if a file is collectible
+ * 
+ * @param {string} file - Filename
+ * @returns {boolean} - True if collectible
+ */
+export function isCollectibleFile(file) {
+    return !file.endsWith('.cache') && !file.endsWith('.lit') && !file.endsWith('.js');
+}
+
+/**
+ * Check if a file is a phishing-related file
+ * 
+ * @param {string} file - Filename
+ * @returns {boolean} - True if phishing file
+ */
+export function isPhishingFile(file) {
+    return file.includes('phish') || file.includes('password') || file.includes('cred');
 }
 
 // ============================================================================
