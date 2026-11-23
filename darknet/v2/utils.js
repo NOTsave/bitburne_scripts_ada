@@ -960,7 +960,15 @@ export const LOG_LEVELS = {
  */
 export function log(ns, message, toast = false, level = LOG_LEVELS.INFO) {
     const timestamp = new Date().toISOString();
-    const prefix = `[${timestamp}] [DARKNET] [${level.toUpperCase()}]`;
+    const levelNames = {
+        [LOG_LEVELS.DEBUG]: 'DEBUG',
+        [LOG_LEVELS.INFO]: 'INFO',
+        [LOG_LEVELS.WARN]: 'WARN',
+        [LOG_LEVELS.ERROR]: 'ERROR',
+        [LOG_LEVELS.SILENT]: 'SILENT'
+    };
+    const levelName = levelNames[level] || 'INFO';
+    const prefix = `[${timestamp}] [DARKNET] [${levelName}]`;
     
     switch (level) {
         case LOG_LEVELS.ERROR:
