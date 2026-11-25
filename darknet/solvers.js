@@ -1,3 +1,4 @@
+import { isDeepGreenPuzzle } from "./deepgreen.js";
 import { isFactoriPuzzle } from "./factori.js";
 
 import { EURO_ZONE_COUNTRIES, TOP_PASS_WORDS } from "./password-lists.js";
@@ -191,5 +192,5 @@ export function puzzleAnswer(details) {
 }
 
 export function isSupported(details) {
-    return isFactoriPuzzle(details) || puzzleCandidates(details).length > 0;
+    return isFactoriPuzzle(details) || isDeepGreenPuzzle(details) || puzzleCandidates(details).length > 0;
 }

@@ -108,7 +108,7 @@ test("workers skip multi-digit Factori feedback when the manager disables it", a
     ns.dnet.probe = () => [target];
     assert.equal(observeNeighbors(ns, false)[0].supported, false);
     assert.equal(observeNeighbors(ns, true)[0].supported, true);
-    assert.equal(await deploy(ns, target, [], false, Infinity, { enabled: false, searches: new Map() }),
+    assert.equal(await deploy(ns, target, [], false, Infinity, { factoriEnabled: false, searches: new Map() }),
         "Factori feedback disabled");
     assert.deepEqual(submitted, []);
 

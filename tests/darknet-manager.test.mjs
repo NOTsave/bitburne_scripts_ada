@@ -175,10 +175,16 @@ test("the one-shot stock worker retries a full report port without repeating the
 });
 
 
-test("manager requires opt-in for Factori feedback in BitNode 15", async () => {
-    for (const [currentNode, factori, enabled] of [[1, false, true], [15, false, false], [15, true, true]]) {
-        const { ns, assignments } = managerFixture({ currentNode, options: { factori } });
+test("manager requires opt-in for puzzle feedback in BitNode 15", async () => {
+    for (const [currentNode, options, expected] of [
+        [1, {}, [true, true]],
+        [15, {}, [false, false]],
+        [15, { factori: true }, [true, false]],
+        [15, { "puzzle-feedback": true }, [true, true]],
+    ]) {
+        const { ns, assignments } = managerFixture({ currentNode, options });
         await assert.rejects(main(ns), error => error === STOP);
-        assert.equal(assignments.at(-1).factoriFeedback, enabled);
+        const plan = assignments.at(-1);
+        assert.deepEqual([plan.factoriFeedback, plan.deepGreenFeedback], expected);
     }
 });

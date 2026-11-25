@@ -1,3 +1,4 @@
+import { authenticateDeepGreen, isDeepGreenPuzzle } from "./deepgreen.js";
 import { authenticateFactori, isFactoriPuzzle } from "./factori.js";
 import { BUNDLE, COLLECTOR, HOME, IDLE, LAB, MIGRATION, REPORT_INTERVAL, STASIS, STOCK, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
 import { isSupported, puzzleAnswer, puzzleCandidates } from "./solvers.js";
@@ -11,7 +12,7 @@ export function freeRam(ns, host) {
     return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
 }
 
-export function observeNeighbors(ns, factoriFeedback = false) {
+export function observeNeighbors(ns, factoriFeedback = false, deepGreenFeedback = false) {
     const neighbors = [];
     for (const host of ns.dnet.probe()) {
         try {
@@ -21,8 +22,9 @@ export function observeNeighbors(ns, factoriFeedback = false) {
                 host,
                 model: details.modelId,
                 depth: details.depth,
-                supported: details.hasSession === true || isSupported(details) &&
-                    (!isFactoriPuzzle(details) || details.passwordLength === 1 || factoriFeedback),
+                supported: details.hasSession === true || (isSupported(details) &&
+                    (!isFactoriPuzzle(details) || details.passwordLength === 1 || factoriFeedback) &&
+                    (!isDeepGreenPuzzle(details) || deepGreenFeedback)),
                 lab: LAB_HOSTS.has(host) && !ns.hasRootAccess(host),
             });
         } catch {
@@ -32,14 +34,18 @@ export function observeNeighbors(ns, factoriFeedback = false) {
     return neighbors;
 }
 
-export async function deploy(ns, target, workerArgs, recover = false, deadline = Infinity, factori = { searches: new Map() }) {
+export async function deploy(ns, target, workerArgs, recover = false, deadline = Infinity, feedback = { searches: new Map() }) {
     const details = ns.dnet.getServerDetails(target);
     if (!details.isOnline || (!recover && !details.isConnectedToCurrentServer)) return "link lost";
     if (recover && !ns.dnet.getStasisLinkedServers().includes(target)) return "stasis link lost";
 
-    if (!details.hasSession && !recover && isFactoriPuzzle(details)) {
-        if (factori.enabled === false && details.passwordLength > 1) return "Factori feedback disabled";
-        const failure = await authenticateFactori(ns, target, details, deadline, factori.searches, factori.heartbeat);
+    if (!details.hasSession && !recover && isDeepGreenPuzzle(details)) {
+        if (feedback.deepGreenEnabled === false) return "DeepGreen feedback disabled";
+        const failure = await authenticateDeepGreen(ns, target, details, deadline, feedback.searches, feedback.heartbeat);
+        if (failure) return failure;
+    } else if (!details.hasSession && !recover && isFactoriPuzzle(details)) {
+        if (feedback.factoriEnabled === false && details.passwordLength > 1) return "Factori feedback disabled";
+        const failure = await authenticateFactori(ns, target, details, deadline, feedback.searches, feedback.heartbeat);
         if (failure) return failure;
     } else if (!details.hasSession) {
         const choices = recover ? [puzzleAnswer(details)] : puzzleCandidates(details);
@@ -121,7 +127,7 @@ export async function main(ns) {
     let result;
     let rewards;
     let idleRun = null;
-    const factoriSearches = new Map();
+    const puzzleSearches = new Map();
 
     function stopIdle() {
         if (idleRun && (ns.kill(idleRun.pid) || !ns.isRunning(idleRun.pid))) idleRun = null;
@@ -132,7 +138,8 @@ export async function main(ns) {
         try {
             const plan = jobs.peek();
             const fresh = planIsFresh(plan, offlineEpoch);
-            const neighbors = observeNeighbors(ns, fresh && plan.factoriFeedback === true);
+            const neighbors = observeNeighbors(ns,
+                fresh && plan.factoriFeedback === true, fresh && plan.deepGreenFeedback === true);
             const pending = host !== HOME && fresh ? countCollectibles(ns, host) : 0;
             if (idleRun && !ns.isRunning(idleRun.pid)) idleRun = null;
             if (idleRun && (!fresh || !plan.phish || pending || hostHasJob(plan, host))) stopIdle();
@@ -209,10 +216,12 @@ export async function main(ns) {
                     } else {
                         status = await deploy(ns, job.target, [reportPort, jobPort, offlineEpoch, WORKER_VERSION],
                             job.kind === "recover", job.expires, {
-                                searches: factoriSearches,
-                                enabled: assignment.factoriFeedback === true,
-                                heartbeat: () => heartbeat(
-                                    observeNeighbors(ns, assignment.factoriFeedback === true), freeRam(ns, host)),
+                                searches: puzzleSearches,
+                                factoriEnabled: assignment.factoriFeedback === true,
+                                deepGreenEnabled: assignment.deepGreenFeedback === true,
+                                heartbeat: () => heartbeat(observeNeighbors(ns,
+                                    assignment.factoriFeedback === true, assignment.deepGreenFeedback === true),
+                                    freeRam(ns, host)),
                             });
                     }
                 } catch (error) {
