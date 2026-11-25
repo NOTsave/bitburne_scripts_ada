@@ -108,7 +108,7 @@ test("DeepGreen keeps worker feedback opt-in and reuses the successful session f
     assert.equal(observeNeighbors(ns, true, false)[0].supported, false);
     assert.equal(observeNeighbors(ns, false, true)[0].supported, true);
     const workerArgs = [10150, 10151, 1, WORKER_VERSION];
-    assert.equal(await deploy(ns, target, workerArgs, false, Infinity, { deepGreenEnabled: false, searches: new Map() }),
+    assert.equal(await deploy(ns, target, workerArgs, false, Infinity, { puzzleEnabled: false, searches: new Map() }),
         "DeepGreen feedback disabled");
     assert.deepEqual(submitted, []);
     assert.equal(await deploy(ns, target, workerArgs), "worker launched");

@@ -25,7 +25,7 @@ export async function authenticateFeedbackPuzzle(ns, target, details, deadline, 
     let search = searches.get(target);
     if (search?.signature !== signature) {
         if (!search && searches.size >= MAX_SEARCHES) searches.delete(searches.keys().next().value);
-        const guesses = solver.guesses(details);
+        const guesses = solver.guesses(details, target);
         search = { signature, guesses, next: guesses.next() };
         searches.set(target, search);
     }

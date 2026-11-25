@@ -220,7 +220,7 @@ export async function main(ns) {
     const options = ns.flags(FLAGS);
     if (options.help) {
         ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish [--phish-threads 4]] [--stock-symbol SYM] [--factori] [--puzzle-feedback]");
-        ns.tprint("In BitNode 15, --puzzle-feedback enables Factori and DeepGreen feedback. --factori enables Factori only.");
+        ns.tprint("In BitNode 15, --puzzle-feedback enables feedback for all supported puzzles. --factori enables Factori only.");
         ns.tprint("Reading puzzle feedback forfeits the no-Heartbleed achievement for that run.");
         return;
     }
@@ -264,7 +264,7 @@ export async function main(ns) {
     const idlePolicy = {
         phish: options.phish, phishThreads, migrationHub: null, labEnabled: !options["no-lab"],
         factoriFeedback: options.factori || puzzleFeedback,
-        deepGreenFeedback: puzzleFeedback,
+        puzzleFeedback,
     };
     const routing = {
         autoStasis: !options["no-stasis"], migrate: options.migrate,

@@ -1,5 +1,6 @@
 import { authenticateDeepGreen, isDeepGreenPuzzle } from "./deepgreen.js";
 import { authenticateFactori, isFactoriPuzzle } from "./factori.js";
+import { authenticateOpenWebAccessPoint, isOpenWebAccessPointPuzzle } from "./openweb.js";
 import { BUNDLE, COLLECTOR, HOME, IDLE, LAB, MIGRATION, REPORT_INTERVAL, STASIS, STOCK, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
 import { isSupported, puzzleAnswer, puzzleCandidates } from "./solvers.js";
 
@@ -12,7 +13,12 @@ export function freeRam(ns, host) {
     return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
 }
 
-export function observeNeighbors(ns, factoriFeedback = false, deepGreenFeedback = false) {
+function feedbackSolver(details) {
+    if (isDeepGreenPuzzle(details)) return authenticateDeepGreen;
+    if (isOpenWebAccessPointPuzzle(details)) return authenticateOpenWebAccessPoint;
+}
+
+export function observeNeighbors(ns, factoriFeedback = false, puzzleFeedback = false) {
     const neighbors = [];
     for (const host of ns.dnet.probe()) {
         try {
@@ -24,7 +30,7 @@ export function observeNeighbors(ns, factoriFeedback = false, deepGreenFeedback 
                 depth: details.depth,
                 supported: details.hasSession === true || (isSupported(details) &&
                     (!isFactoriPuzzle(details) || details.passwordLength === 1 || factoriFeedback) &&
-                    (!isDeepGreenPuzzle(details) || deepGreenFeedback)),
+                    (!feedbackSolver(details) || puzzleFeedback)),
                 lab: LAB_HOSTS.has(host) && !ns.hasRootAccess(host),
             });
         } catch {
@@ -39,9 +45,10 @@ export async function deploy(ns, target, workerArgs, recover = false, deadline =
     if (!details.isOnline || (!recover && !details.isConnectedToCurrentServer)) return "link lost";
     if (recover && !ns.dnet.getStasisLinkedServers().includes(target)) return "stasis link lost";
 
-    if (!details.hasSession && !recover && isDeepGreenPuzzle(details)) {
-        if (feedback.deepGreenEnabled === false) return "DeepGreen feedback disabled";
-        const failure = await authenticateDeepGreen(ns, target, details, deadline, feedback.searches, feedback.heartbeat);
+    const solve = !details.hasSession && !recover && feedbackSolver(details);
+    if (solve) {
+        if (feedback.puzzleEnabled === false) return details.modelId + " feedback disabled";
+        const failure = await solve(ns, target, details, deadline, feedback.searches, feedback.heartbeat);
         if (failure) return failure;
     } else if (!details.hasSession && !recover && isFactoriPuzzle(details)) {
         if (feedback.factoriEnabled === false && details.passwordLength > 1) return "Factori feedback disabled";
@@ -139,7 +146,7 @@ export async function main(ns) {
             const plan = jobs.peek();
             const fresh = planIsFresh(plan, offlineEpoch);
             const neighbors = observeNeighbors(ns,
-                fresh && plan.factoriFeedback === true, fresh && plan.deepGreenFeedback === true);
+                fresh && plan.factoriFeedback === true, fresh && plan.puzzleFeedback === true);
             const pending = host !== HOME && fresh ? countCollectibles(ns, host) : 0;
             if (idleRun && !ns.isRunning(idleRun.pid)) idleRun = null;
             if (idleRun && (!fresh || !plan.phish || pending || hostHasJob(plan, host))) stopIdle();
@@ -218,9 +225,9 @@ export async function main(ns) {
                             job.kind === "recover", job.expires, {
                                 searches: puzzleSearches,
                                 factoriEnabled: assignment.factoriFeedback === true,
-                                deepGreenEnabled: assignment.deepGreenFeedback === true,
+                                puzzleEnabled: assignment.puzzleFeedback === true,
                                 heartbeat: () => heartbeat(observeNeighbors(ns,
-                                    assignment.factoriFeedback === true, assignment.deepGreenFeedback === true),
+                                    assignment.factoriFeedback === true, assignment.puzzleFeedback === true),
                                     freeRam(ns, host)),
                             });
                     }

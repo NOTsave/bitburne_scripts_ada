@@ -185,6 +185,6 @@ test("manager requires opt-in for puzzle feedback in BitNode 15", async () => {
         const { ns, assignments } = managerFixture({ currentNode, options });
         await assert.rejects(main(ns), error => error === STOP);
         const plan = assignments.at(-1);
-        assert.deepEqual([plan.factoriFeedback, plan.deepGreenFeedback], expected);
+        assert.deepEqual([plan.factoriFeedback, plan.puzzleFeedback], expected);
     }
 });
