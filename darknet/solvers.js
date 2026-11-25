@@ -1,3 +1,5 @@
+import { EURO_ZONE_COUNTRIES, TOP_PASS_WORDS } from "./password-lists.js";
+
 // FreshInstall_1.0 has four stock answers in Bitburner 3.0.1.
 // Each is uniquely identified by the game's reported format and length.
 const FRESH_INSTALL_ANSWERS = {
@@ -12,6 +14,11 @@ const LAIKA_NAMES = {
     4: ["fido", "spot"],
     5: ["rover"],
 };
+
+const GAME_PASSWORD_LISTS = new Map([
+    ["EuroZone Free", EURO_ZONE_COUNTRIES],
+    ["TopPass", TOP_PASS_WORDS],
+]);
 
 const DESK_MEMO_HINT = /^(?:The password is|The PIN is|Remember to use|It's set to|The key is|The secret is) (\d{1,3})$/;
 
@@ -35,6 +42,42 @@ function solveOctantVoxel(clue) {
     const rounded = Math.round(decimal);
     if (Number.isSafeInteger(rounded) && Math.abs(decimal - rounded) < 0.001) return String(rounded);
     return undefined;
+}
+
+function matchesPassword(details, password) {
+    if (password.length !== details.passwordLength) return false;
+    let format;
+    if (/^\d+$/.test(password)) format = "numeric";
+    else if (/^[A-Za-z]+$/.test(password)) format = "alphabetic";
+    else if (/^[0-9A-Za-z]+$/.test(password)) format = "alphanumeric";
+    else if ([...password].every(character => character.charCodeAt(0) < 128)) format = "ASCII";
+    else format = "unicode";
+    return format === details.passwordFormat;
+}
+
+function solvePrimeTime(clue) {
+    if (typeof clue !== "string" || !/^[1-9]\d*$/.test(clue)) return undefined;
+    let remaining = Number(clue);
+    if (!Number.isSafeInteger(remaining)) return undefined;
+
+    // The generator multiplies one prime from 1471 to 9859 by primes at most 97.
+    for (let divisor = 2; divisor <= 99 && divisor * divisor <= remaining; divisor++) {
+        while (remaining % divisor === 0) remaining /= divisor;
+    }
+
+    return remaining >= 1471 && remaining <= 9859 ? String(remaining) : undefined;
+}
+
+function decodeOrdoXenos(clue) {
+    if (typeof clue !== "string") return undefined;
+    const [ciphertext, maskData, extra] = clue.split(";");
+    if (!ciphertext || !maskData || extra !== undefined) return undefined;
+
+    const masks = maskData.split(" ");
+    if (masks.length !== ciphertext.length || !masks.every(mask => /^000[01]{5}$/.test(mask))) return undefined;
+    const answer = masks.map((mask, index) =>
+        String.fromCharCode(ciphertext.charCodeAt(index) ^ Number.parseInt(mask, 2))).join("");
+    return /^[0-9A-Za-z]+$/.test(answer) ? answer : undefined;
 }
 
 // Game puzzle answers only. undefined means there is no recognized answer.
@@ -75,8 +118,12 @@ function singlePuzzleAnswer(details) {
             }
             const answer = bytes.map(byte => String.fromCharCode(Number.parseInt(byte, 2))).join("");
             if (!/^[0-9A-Za-z]+$/.test(answer)) return undefined;
-            const format = /^\d+$/.test(answer) ? "numeric" : /^[A-Za-z]+$/.test(answer) ? "alphabetic" : "alphanumeric";
-            return format === details.passwordFormat ? answer : undefined;
+            return matchesPassword(details, answer) ? answer : undefined;
+        }
+        case "PrimeTime 2":
+        case "OrdoXenos": {
+            const answer = details.modelId === "PrimeTime 2" ? solvePrimeTime(details.data) : decodeOrdoXenos(details.data);
+            return answer !== undefined && matchesPassword(details, answer) ? answer : undefined;
         }
         case "CloudBlare(tm)":
         case "OctantVoxel": {
@@ -110,6 +157,8 @@ function sortedDigitOrders(details) {
 }
 
 export function puzzleCandidates(details) {
+    const dictionary = GAME_PASSWORD_LISTS.get(details.modelId);
+    if (dictionary) return dictionary.filter(password => matchesPassword(details, password));
     if (details.modelId === "PHP 5.4") return sortedDigitOrders(details);
     if (details.modelId === "AccountsManager_4.2") {
         if (details.passwordFormat !== "numeric" || details.passwordLength !== 1 ||
