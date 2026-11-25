@@ -161,9 +161,20 @@ export function puzzleCandidates(details) {
     if (dictionary) return dictionary.filter(password => matchesPassword(details, password));
     if (details.modelId === "PHP 5.4") return sortedDigitOrders(details);
     if (details.modelId === "AccountsManager_4.2") {
-        if (details.passwordFormat !== "numeric" || details.passwordLength !== 1 ||
-            details.passwordHint !== "The password is a number between 0 and 10") return [];
-        return "0123456789".split("");
+        const { passwordFormat, passwordLength, passwordHint, difficulty } = details;
+        if (passwordFormat !== "numeric" || !Number.isInteger(passwordLength) ||
+            passwordLength < 1 || passwordLength > 3) return [];
+
+        const hintCeiling = 10 ** passwordLength;
+        if (passwordHint !== "The password is a number between 0 and " + hintCeiling) return [];
+
+        // The displayed ceiling comes from the digit count. Difficulty narrows the generated range.
+        const minimum = passwordLength === 1 ? 0 : hintCeiling / 10;
+        const configuredCeiling = Number.isFinite(difficulty) && difficulty >= 0
+            ? Math.ceil(10 * (difficulty + 3) / 3)
+            : hintCeiling;
+        const count = Math.max(0, Math.min(hintCeiling, configuredCeiling) - minimum);
+        return Array.from({ length: count }, (_, index) => String(minimum + index));
     }
     if (details.modelId === "Laika4") {
         return details.passwordFormat === "alphabetic" ? (LAIKA_NAMES[details.passwordLength] ?? []) : [];
