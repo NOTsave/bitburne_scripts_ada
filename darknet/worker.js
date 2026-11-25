@@ -1,3 +1,4 @@
+import { authenticateFactori, isFactoriPuzzle } from "./factori.js";
 import { BUNDLE, COLLECTOR, HOME, IDLE, LAB, MIGRATION, REPORT_INTERVAL, STASIS, STOCK, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
 import { isSupported, puzzleAnswer, puzzleCandidates } from "./solvers.js";
 
@@ -10,7 +11,7 @@ export function freeRam(ns, host) {
     return Math.max(0, ns.getServerMaxRam(host) - ns.getServerUsedRam(host));
 }
 
-export function observeNeighbors(ns) {
+export function observeNeighbors(ns, factoriFeedback = false) {
     const neighbors = [];
     for (const host of ns.dnet.probe()) {
         try {
@@ -20,7 +21,8 @@ export function observeNeighbors(ns) {
                 host,
                 model: details.modelId,
                 depth: details.depth,
-                supported: isSupported(details) || details.hasSession === true,
+                supported: details.hasSession === true || isSupported(details) &&
+                    (!isFactoriPuzzle(details) || details.passwordLength === 1 || factoriFeedback),
                 lab: LAB_HOSTS.has(host) && !ns.hasRootAccess(host),
             });
         } catch {
@@ -30,12 +32,16 @@ export function observeNeighbors(ns) {
     return neighbors;
 }
 
-export async function deploy(ns, target, workerArgs, recover = false, deadline = Infinity) {
+export async function deploy(ns, target, workerArgs, recover = false, deadline = Infinity, factori = { searches: new Map() }) {
     const details = ns.dnet.getServerDetails(target);
     if (!details.isOnline || (!recover && !details.isConnectedToCurrentServer)) return "link lost";
     if (recover && !ns.dnet.getStasisLinkedServers().includes(target)) return "stasis link lost";
 
-    if (!details.hasSession) {
+    if (!details.hasSession && !recover && isFactoriPuzzle(details)) {
+        if (factori.enabled === false && details.passwordLength > 1) return "Factori feedback disabled";
+        const failure = await authenticateFactori(ns, target, details, deadline, factori.searches, factori.heartbeat);
+        if (failure) return failure;
+    } else if (!details.hasSession) {
         const choices = recover ? [puzzleAnswer(details)] : puzzleCandidates(details);
         if (!choices.length || choices[0] === undefined) return "unsupported model";
 
@@ -115,6 +121,7 @@ export async function main(ns) {
     let result;
     let rewards;
     let idleRun = null;
+    const factoriSearches = new Map();
 
     function stopIdle() {
         if (idleRun && (ns.kill(idleRun.pid) || !ns.isRunning(idleRun.pid))) idleRun = null;
@@ -123,9 +130,9 @@ export async function main(ns) {
     while (true) {
         let handoff;
         try {
-            const neighbors = observeNeighbors(ns);
             const plan = jobs.peek();
             const fresh = planIsFresh(plan, offlineEpoch);
+            const neighbors = observeNeighbors(ns, fresh && plan.factoriFeedback === true);
             const pending = host !== HOME && fresh ? countCollectibles(ns, host) : 0;
             if (idleRun && !ns.isRunning(idleRun.pid)) idleRun = null;
             if (idleRun && (!fresh || !plan.phish || pending || hostHasJob(plan, host))) stopIdle();
@@ -149,10 +156,11 @@ export async function main(ns) {
                     canPromoteStock: stockRam > 0 && availableForJobs >= stockRam,
                 };
             }
-            sendReport(ns, reportPort, {
+            const heartbeat = (neighbors, free) => sendReport(ns, reportPort, {
                 type: "heartbeat", version: WORKER_VERSION, offlineEpoch,
                 neighbors, free, result, rewards, location, idleThreads: idleRun?.threads ?? 0,
             });
+            heartbeat(neighbors, free);
 
             if (host !== HOME && fresh) {
                 try {
@@ -200,7 +208,12 @@ export async function main(ns) {
                         }
                     } else {
                         status = await deploy(ns, job.target, [reportPort, jobPort, offlineEpoch, WORKER_VERSION],
-                            job.kind === "recover", job.expires);
+                            job.kind === "recover", job.expires, {
+                                searches: factoriSearches,
+                                enabled: assignment.factoriFeedback === true,
+                                heartbeat: () => heartbeat(
+                                    observeNeighbors(ns, assignment.factoriFeedback === true), freeRam(ns, host)),
+                            });
                     }
                 } catch (error) {
                     status = String(error);

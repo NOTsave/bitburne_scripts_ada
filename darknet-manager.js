@@ -2,7 +2,7 @@ import { HOME, JOB_TTL, REPORT_INTERVAL, RETRY_DELAY, SIGHTING_TTL, WORKER, WORK
 import { puzzleAnswer } from "./darknet/solvers.js";
 
 const STATE_FILE = "data/darknet-state.txt";
-const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["phish", false], ["phish-threads", 4], ["stock-symbol", ""], ["help", false]];
+const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["phish", false], ["phish-threads", 4], ["stock-symbol", ""], ["factori", false], ["help", false]];
 const MIGRATION_INTERVAL = 60_000;
 const STOCK_INTERVAL = 60_000;
 const STOCK_JOB_TTL = 30_000;
@@ -219,7 +219,8 @@ function publish(ns, port, jobPort, offlineEpoch, jobs, idlePolicy) {
 export async function main(ns) {
     const options = ns.flags(FLAGS);
     if (options.help) {
-        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish [--phish-threads 4]] [--stock-symbol SYM]");
+        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish [--phish-threads 4]] [--stock-symbol SYM] [--factori]");
+        ns.tprint("In BitNode 15, --factori enables feedback that forfeits the no-Heartbleed achievement.");
         return;
     }
     if (ns.getHostname() !== HOME) {
@@ -258,7 +259,10 @@ export async function main(ns) {
     const idle = { completed: 0, successes: 0, latest: null };
     const stock = { symbol: stockSymbol, latest: null, nextAt: Date.now() + 3 * REPORT_INTERVAL };
     const phishThreads = Math.max(1, Math.min(4, Math.floor(options["phish-threads"] ?? 4)));
-    const idlePolicy = { phish: options.phish, phishThreads, migrationHub: null, labEnabled: !options["no-lab"] };
+    const idlePolicy = {
+        phish: options.phish, phishThreads, migrationHub: null, labEnabled: !options["no-lab"],
+        factoriFeedback: options.factori || ns.getResetInfo().currentNode !== 15,
+    };
     const routing = {
         autoStasis: !options["no-stasis"], migrate: options.migrate,
         hub: null, links: [], sessionVerified: false, nextLinkCheckAt: 0,

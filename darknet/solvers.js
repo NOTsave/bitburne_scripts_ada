@@ -1,3 +1,5 @@
+import { isFactoriPuzzle } from "./factori.js";
+
 import { EURO_ZONE_COUNTRIES, TOP_PASS_WORDS } from "./password-lists.js";
 
 // FreshInstall_1.0 has four stock answers in Bitburner 3.0.1.
@@ -189,5 +191,5 @@ export function puzzleAnswer(details) {
 }
 
 export function isSupported(details) {
-    return puzzleCandidates(details).length > 0;
+    return isFactoriPuzzle(details) || puzzleCandidates(details).length > 0;
 }

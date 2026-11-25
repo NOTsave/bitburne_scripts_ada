@@ -6,7 +6,7 @@ import { main as promoteStock } from "../darknet/stock.js";
 
 const STOP = new Error("end of manager cycle");
 
-function managerFixture({ existing, saved, neighbors = [], options = {}, onSleep } = {}) {
+function managerFixture({ existing, saved, neighbors = [], options = {}, onSleep, currentNode = 1 } = {}) {
     const reportPort = options.port ?? 10150;
     const inbox = [];
     const assignments = [];
@@ -21,6 +21,7 @@ function managerFixture({ existing, saved, neighbors = [], options = {}, onSleep
         pid: 10,
         flags: schema => ({ ...Object.fromEntries(schema), ...options }),
         getHostname: () => "home",
+        getResetInfo: () => ({ currentNode }),
         getScriptName: () => "darknet-manager.js",
         ps: () => existing ? [existing] : [],
         read: () => saved ? JSON.stringify(saved) : "",
@@ -171,4 +172,13 @@ test("the one-shot stock worker retries a full report port without repeating the
     assert.equal(reports.length, 2);
     assert.deepEqual(reports[1].result,
         { id: "stock-job", target: "darkweb", success: true, status: "ECP: Success" });
+});
+
+
+test("manager requires opt-in for Factori feedback in BitNode 15", async () => {
+    for (const [currentNode, factori, enabled] of [[1, false, true], [15, false, false], [15, true, true]]) {
+        const { ns, assignments } = managerFixture({ currentNode, options: { factori } });
+        await assert.rejects(main(ns), error => error === STOP);
+        assert.equal(assignments.at(-1).factoriFeedback, enabled);
+    }
 });
