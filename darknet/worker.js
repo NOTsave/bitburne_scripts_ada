@@ -1,4 +1,4 @@
-import { BUNDLE, COLLECTOR, HOME, IDLE, LAB, MIGRATION, REPORT_INTERVAL, STASIS, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
+import { BUNDLE, COLLECTOR, HOME, IDLE, LAB, MIGRATION, REPORT_INTERVAL, STASIS, STOCK, WORKER, WORKER_VERSION, sendReport } from "./protocol.js";
 import { isSupported, puzzleAnswer, puzzleCandidates } from "./solvers.js";
 
 const LAB_HOSTS = new Set([
@@ -138,6 +138,7 @@ export async function main(ns) {
                 const stasisRam = ns.getScriptRam(STASIS, host);
                 const migrateRam = ns.getScriptRam(MIGRATION, host);
                 const labRam = ns.getScriptRam(LAB, host);
+                const stockRam = ns.getScriptRam(STOCK, host);
                 const self = ns.self();
                 location = {
                     depth: details.depth,
@@ -145,6 +146,7 @@ export async function main(ns) {
                     canAnchor: stasisRam > 0 && puzzleAnswer(details) !== undefined && availableForJobs + self.ramUsage * self.threads >= stasisRam,
                     canCharge: migrateRam > 0 && availableForJobs >= migrateRam,
                     canNavigate: labRam > 0 && availableForJobs >= labRam,
+                    canPromoteStock: stockRam > 0 && availableForJobs >= stockRam,
                 };
             }
             sendReport(ns, reportPort, {
@@ -189,6 +191,12 @@ export async function main(ns) {
                         if (!threads || !ns.run(MIGRATION, { threads, preventDuplicates: true },
                             reportPort, jobPort, offlineEpoch, job.id, job.target, job.riderPid)) {
                             status = "waiting for migration RAM";
+                        }
+                    } else if (job.kind === "stock") {
+                        const cost = ns.getScriptRam(STOCK, host);
+                        if (!cost || freeRam(ns, host) < cost ||
+                            !ns.run(STOCK, { preventDuplicates: true }, reportPort, offlineEpoch, job.id, job.symbol)) {
+                            status = "waiting for stock promotion RAM";
                         }
                     } else {
                         status = await deploy(ns, job.target, [reportPort, jobPort, offlineEpoch, WORKER_VERSION],
