@@ -1,9 +1,11 @@
-import { HOME, JOB_TTL, RETRY_DELAY, SIGHTING_TTL, WORKER, WORKER_VERSION } from "./darknet/protocol.js";
+import { HOME, JOB_TTL, REPORT_INTERVAL, RETRY_DELAY, SIGHTING_TTL, WORKER, WORKER_VERSION } from "./darknet/protocol.js";
 import { puzzleAnswer } from "./darknet/solvers.js";
 
 const STATE_FILE = "data/darknet-state.txt";
-const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["phish", false], ["phish-threads", 4], ["help", false]];
+const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-lab", false], ["phish", false], ["phish-threads", 4], ["stock-symbol", ""], ["help", false]];
 const MIGRATION_INTERVAL = 60_000;
+const STOCK_INTERVAL = 60_000;
+const STOCK_JOB_TTL = 30_000;
 
 function fresh(worker, now) {
     return worker && now - worker.at <= SIGHTING_TTL;
@@ -43,7 +45,7 @@ export function assignRoutes(workers, jobs, retryAt, routing, now, nextId) {
     }
 
     if (!routing.migrate || now < routing.nextMigrationAt || !anchor.location?.canCharge || !available(anchor) ||
-        outstanding.length || active.some(worker => worker.neighbors.some(
+        outstanding.some(job => job.kind !== "stock") || active.some(worker => worker.neighbors.some(
             neighbor => neighbor.supported && !fresh(workers.get(neighbor.host), now) &&
                 (retryAt.get(neighbor.host) ?? 0) <= now))) return;
 
@@ -107,16 +109,39 @@ export function assignJobs(workers, jobs, retryAt, now, nextId) {
     }
 }
 
-function finishJob(ns, host, result, jobs, retryAt, routing) {
-    if (!result || jobs.get(result.target)?.id !== result.id) return;
-    const { kind } = jobs.get(result.target);
+function assignStock(workers, jobs, retryAt, stock, now, nextId) {
+    if (!stock.symbol || now < stock.nextAt) return;
+    const outstanding = [...jobs.values()];
+    if (outstanding.some(job => job.kind === "stock")) return;
+    const busy = new Set(outstanding.flatMap(job => [job.worker, job.target]));
+    const worker = [...workers.values()].find(candidate =>
+        candidate.host !== HOME && fresh(candidate, now) && !busy.has(candidate.host) &&
+        candidate.location?.canPromoteStock && candidate.rewards === "no collectibles" &&
+        (retryAt.get(candidate.host) ?? 0) <= now);
+    if (!worker) return;
+    jobs.set(worker.host, {
+        id: nextId(), kind: "stock", target: worker.host, worker: worker.host, pid: worker.pid,
+        expires: now + STOCK_JOB_TTL, symbol: stock.symbol,
+    });
+    stock.nextAt = now + STOCK_INTERVAL;
+}
+
+function finishJob(ns, host, result, jobs, retryAt, routing, stock) {
+    if (!result) return;
+    const job = jobs.get(result.target);
+    if (!job || job.id !== result.id || (job.kind === "stock" && job.worker !== host)) return;
+    const { kind } = job;
     jobs.delete(result.target);
     retryAt.set(result.target, Date.now() + RETRY_DELAY);
-    if (kind) routing.lastAction = { kind, host, target: result.target, status: result.status };
+    if (kind === "stock") {
+        stock.latest = { host, at: Date.now(), success: result.success === true, status: result.status };
+    } else if (kind) {
+        routing.lastAction = { kind, host, target: result.target, status: result.status };
+    }
     ns.print(`${host} → ${result.target}: ${result.status}`);
 }
 
-function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle) {
+function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle, stock) {
     while (!port.empty()) {
         const report = port.read();
         if (!report || typeof report.host !== "string") continue;
@@ -154,13 +179,13 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
                 job.worker === report.host) {
                 const { host, target, pid, coords, visited, steps, radar, status, done, solved, at } = report;
                 lab.latest = { host, target, pid, coords, visited, steps, radar, status, done, solved, at };
-                if (done) finishJob(ns, host, { id: report.id, target, status }, jobs, retryAt, routing);
+                if (done) finishJob(ns, host, { id: report.id, target, status }, jobs, retryAt, routing, stock);
                 else job.expires = Date.now() + JOB_TTL;
             }
             continue;
         }
         if (report.type === "route") {
-            if (report.offlineEpoch === offlineEpoch) finishJob(ns, report.host, report.result, jobs, retryAt, routing);
+            if (report.offlineEpoch === offlineEpoch) finishJob(ns, report.host, report.result, jobs, retryAt, routing, stock);
             continue;
         }
         if (report.type !== "heartbeat") continue;
@@ -174,7 +199,7 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
         if (report.offlineEpoch !== offlineEpoch) continue;
         if (report.at < (workers.get(report.host)?.at ?? 0)) continue;
         workers.set(report.host, report);
-        finishJob(ns, report.host, report.result, jobs, retryAt, routing);
+        finishJob(ns, report.host, report.result, jobs, retryAt, routing, stock);
         const incoming = jobs.get(report.host);
         if (incoming && (!incoming.kind || incoming.kind === "recover") && incoming.worker !== report.host) {
             if (incoming.kind === "recover") {
@@ -194,7 +219,7 @@ function publish(ns, port, jobPort, offlineEpoch, jobs, idlePolicy) {
 export async function main(ns) {
     const options = ns.flags(FLAGS);
     if (options.help) {
-        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish [--phish-threads 4]]");
+        ns.tprint("Run from home: run darknet-manager.js [--port 10150] [--no-stasis] [--migrate] [--no-lab] [--phish [--phish-threads 4]] [--stock-symbol SYM]");
         return;
     }
     if (ns.getHostname() !== HOME) {
@@ -212,10 +237,17 @@ export async function main(ns) {
         return;
     }
 
+    const stockSymbol = String(options["stock-symbol"] ?? "").trim().toUpperCase();
+    if (stockSymbol && !/^[A-Z]{2,6}$/.test(stockSymbol)) {
+        ns.tprint("--stock-symbol must be one stock ticker.");
+        return;
+    }
+
     const reports = ns.getPortHandle(reportPort);
     const assignments = ns.getPortHandle(jobPort);
     let offlineEpoch = Date.now();
     let rootPid = 0;
+    let outdatedRootPid = 0;
     let sequence = Date.now();
     const workers = new Map();
     const jobs = new Map();
@@ -224,6 +256,7 @@ export async function main(ns) {
     const collected = { files: 0, caches: 0, lastReward: null };
     const lab = { latest: null };
     const idle = { completed: 0, successes: 0, latest: null };
+    const stock = { symbol: stockSymbol, latest: null, nextAt: Date.now() + 3 * REPORT_INTERVAL };
     const phishThreads = Math.max(1, Math.min(4, Math.floor(options["phish-threads"] ?? 4)));
     const idlePolicy = { phish: options.phish, phishThreads, migrationHub: null, labEnabled: !options["no-lab"] };
     const routing = {
@@ -234,10 +267,11 @@ export async function main(ns) {
 
     // Rejoin workers left running by an earlier manager on the same ports.
     const existing = ns.ps(HOME).find(script => script.filename.replace(/^\//, "") === WORKER &&
-        script.args[0] === reportPort && script.args[1] === jobPort && script.args[3] === WORKER_VERSION);
+        script.args[0] === reportPort && script.args[1] === jobPort);
     if (existing) {
-        rootPid = existing.pid;
-        offlineEpoch = existing.args[2];
+        if (Number.isSafeInteger(existing.args[2])) offlineEpoch = existing.args[2];
+        if (existing.args[3] === WORKER_VERSION) rootPid = existing.pid;
+        else outdatedRootPid = existing.pid;
     }
     try {
         const saved = JSON.parse(ns.read(STATE_FILE));
@@ -252,6 +286,12 @@ export async function main(ns) {
             idle.completed = saved.idleWork?.completed ?? 0;
             idle.successes = saved.idleWork?.successes ?? 0;
             idle.latest = saved.idleWork?.latest ?? null;
+            if (stock.symbol && saved.stockPromotion?.symbol === stock.symbol) {
+                stock.latest = saved.stockPromotion.latest ?? null;
+                if (Number.isFinite(saved.stockPromotion.nextAt)) {
+                    stock.nextAt = Math.max(stock.nextAt, saved.stockPromotion.nextAt);
+                }
+            }
         }
     } catch {
         // An absent or invalid snapshot is recoverable from fresh reports.
@@ -266,12 +306,13 @@ export async function main(ns) {
 
     while (true) {
         const now = Date.now();
-        if (!rootPid || !ns.isRunning(rootPid)) {
+        if (outdatedRootPid && (ns.kill(outdatedRootPid) || !ns.isRunning(outdatedRootPid))) outdatedRootPid = 0;
+        if (!outdatedRootPid && (!rootPid || !ns.isRunning(rootPid))) {
             rootPid = ns.run(WORKER, { preventDuplicates: true }, reportPort, jobPort, offlineEpoch, WORKER_VERSION);
             if (!rootPid) ns.print("Waiting for enough home RAM to start the Darknet worker.");
         }
 
-        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle);
+        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle, stock);
         refreshLinks(ns, routing, now);
         for (const [target, job] of jobs) {
             if (job.expires <= now || (job.kind !== "stasis" && !ns.isRunning(job.pid))) jobs.delete(target);
@@ -283,6 +324,7 @@ export async function main(ns) {
         if (!options["no-lab"]) assignLab(workers, jobs, retryAt, now, nextId);
         assignRoutes(workers, jobs, retryAt, routing, now, nextId);
         assignJobs(workers, jobs, retryAt, now, nextId);
+        assignStock(workers, jobs, retryAt, stock, now, nextId);
         idlePolicy.migrationHub = routing.migrate ? routing.hub : null;
         publish(ns, assignments, jobPort, offlineEpoch, jobs, idlePolicy);
 
@@ -295,6 +337,7 @@ export async function main(ns) {
                 workers: snapshot, jobs: [...jobs.values()],
                 labyrinth: { enabled: !options["no-lab"], latest: lab.latest },
                 idleWork: { enabled: options.phish, maxThreads: options.phish ? phishThreads : 0, ...idle },
+                stockPromotion: stock,
                 routing: { hub: routing.hub, links: routing.links, sessionVerified: routing.sessionVerified,
                     migrationEnabled: routing.migrate, lastAction: routing.lastAction },
             }, null, 2), "w");

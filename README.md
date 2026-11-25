@@ -31,6 +31,14 @@ The current manager includes guarded production scaling and automatic public-cap
 
 See the [Corporation operator guide](corporation-automation-guide.md) and [design/verification notes](corporation-automation-design.md). Run the local checks with `node --test tests/corp-funding.test.mjs tests/corp-reconciliation.test.mjs tests/corp-supervisor.test.mjs tests/corp-launcher.test.mjs`. Actual augmentation reattachment remains pending the next natural install. P7 formation and BN10 multiplier handling are fixture-verified; natural corporation-free BN3 and eligible non-BN3 live formation remain pending. The P7 manager measures 876.80 GB (908.80 GB including 32 GB headroom).
 
+## Darknet
+
+The daemon starts `darknet-manager.js` on `home` when DarkscapeNavigator.exe and enough RAM are available. To start it manually, run `run darknet-manager.js` on `home`. Use `--help` for options. The manager uses port 10150 for reports and 10151 for assignments by default. It writes progress and results to `data/darknet-state.txt`.
+
+To enable optional stock promotion, start the manager with a ticker, for example `run darknet-manager.js --stock-symbol ECP`. One available Darknet worker runs the promotion and reports the result in `stockPromotion.latest` in the same state file.
+
+When updating from the two-framework release, stop the old manager and any running `darknet/v2/` scripts before pulling the update. Restart the manager or let the daemon start it. The manager replaces obsolete workers on its ports as they check in.
+
 # Running scripts
 
 If you `run autopilot.js` from the terminal, it will start several other scripts.
