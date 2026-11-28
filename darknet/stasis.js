@@ -2,7 +2,7 @@ import { WORKER, sendReport } from "./protocol.js";
 
 /** @param {NS} ns */
 export async function main(ns) {
-    const [reportPort, jobPort, offlineEpoch, version, id] = ns.args;
+    const [reportPort, jobPort, offlineEpoch, version, id, workerPid] = ns.args;
     const host = ns.getHostname();
     let status;
     try {
@@ -17,6 +17,6 @@ export async function main(ns) {
         status = String(error);
     }
 
-    sendReport(ns, reportPort, { type: "route", offlineEpoch, result: { id, target: host, status } });
+    sendReport(ns, reportPort, { type: "route", kind: "stasis", offlineEpoch, workerPid, result: { id, target: host, status } });
     ns.spawn(WORKER, { spawnDelay: 0, preventDuplicates: true }, reportPort, jobPort, offlineEpoch, version);
 }

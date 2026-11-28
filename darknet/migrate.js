@@ -2,7 +2,7 @@ import { REPORT_INTERVAL, sendReport } from "./protocol.js";
 
 /** @param {NS} ns */
 export async function main(ns) {
-    const [reportPort, jobPort, offlineEpoch, id, target, riderPid] = ns.args;
+    const [reportPort, jobPort, offlineEpoch, id, target, riderPid, workerPid] = ns.args;
     const host = ns.getHostname();
     let status = "migration charge sent";
     try {
@@ -38,5 +38,5 @@ export async function main(ns) {
     } catch (error) {
         status = String(error);
     }
-    sendReport(ns, reportPort, { type: "route", offlineEpoch, result: { id, target, status } });
+    sendReport(ns, reportPort, { type: "route", kind: "migrate", offlineEpoch, workerPid, result: { id, target, status } });
 }

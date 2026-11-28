@@ -196,7 +196,11 @@ export async function main(ns) {
                     if (job.kind === "stasis") {
                         const self = ns.self();
                         if (freeRam(ns, host) + self.ramUsage * self.threads >= ns.getScriptRam(STASIS, host)) {
-                            handoff = [reportPort, jobPort, offlineEpoch, WORKER_VERSION, job.id];
+                            if (sendReport(ns, reportPort, { type: "handoff", offlineEpoch, id: job.id })) {
+                                handoff = [reportPort, jobPort, offlineEpoch, WORKER_VERSION, job.id, ns.pid];
+                            } else {
+                                lastJob = "";
+                            }
                         } else {
                             status = "waiting for stasis RAM";
                         }
@@ -204,20 +208,20 @@ export async function main(ns) {
                         const cost = ns.getScriptRam(LAB, host);
                         const threads = cost > 0 ? Math.min(8, Math.floor(freeRam(ns, host) / cost)) : 0;
                         if (!threads || !ns.run(LAB, { threads, preventDuplicates: true },
-                            reportPort, jobPort, offlineEpoch, job.id, job.target)) {
+                            reportPort, jobPort, offlineEpoch, job.id, job.target, ns.pid)) {
                             status = "waiting for Labyrinth RAM";
                         }
                     } else if (job.kind === "migrate") {
                         const cost = ns.getScriptRam(MIGRATION, host);
                         const threads = cost > 0 ? Math.min(8, Math.floor(freeRam(ns, host) / cost)) : 0;
                         if (!threads || !ns.run(MIGRATION, { threads, preventDuplicates: true },
-                            reportPort, jobPort, offlineEpoch, job.id, job.target, job.riderPid)) {
+                            reportPort, jobPort, offlineEpoch, job.id, job.target, job.riderPid, ns.pid)) {
                             status = "waiting for migration RAM";
                         }
                     } else if (job.kind === "stock") {
                         const cost = ns.getScriptRam(STOCK, host);
                         if (!cost || freeRam(ns, host) < cost ||
-                            !ns.run(STOCK, { preventDuplicates: true }, reportPort, offlineEpoch, job.id, job.symbol)) {
+                            !ns.run(STOCK, { preventDuplicates: true }, reportPort, offlineEpoch, job.id, job.symbol, ns.pid)) {
                             status = "waiting for stock promotion RAM";
                         }
                     } else {

@@ -23,7 +23,7 @@ function nextMove(position, visited, blocked, trail) {
 
 /** @param {NS} ns */
 export async function main(ns) {
-    const [reportPort, jobPort, offlineEpoch, id, target] = ns.args;
+    const [reportPort, jobPort, offlineEpoch, id, target, workerPid] = ns.args;
     if (!Number.isSafeInteger(reportPort) || reportPort < 1 ||
         !Number.isSafeInteger(jobPort) || jobPort < 1 || jobPort === reportPort ||
         !Number.isSafeInteger(offlineEpoch) || typeof id !== "string" || !id ||
@@ -40,7 +40,7 @@ export async function main(ns) {
     let steps = 0;
     let solved = false;
     const report = (status, done = false) => sendReport(ns, reportPort, {
-        type: "lab", offlineEpoch, id, target, status, done, solved,
+        type: "lab", offlineEpoch, id, target, workerPid, status, done, solved,
         coords: position?.coords, visited: visited.size, steps, radar,
     });
     const active = () => {

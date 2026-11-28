@@ -6,6 +6,8 @@ const FLAGS = [["port", 10150], ["migrate", false], ["no-stasis", false], ["no-l
 const MIGRATION_INTERVAL = 60_000;
 const STOCK_INTERVAL = 60_000;
 const STOCK_JOB_TTL = 30_000;
+const STASIS_HANDOFF_TTL = 60_000;
+const WORKER_RETENTION = 120_000;
 
 function fresh(worker, now) {
     return worker && now - worker.at <= SIGHTING_TTL;
@@ -126,22 +128,45 @@ function assignStock(workers, jobs, retryAt, stock, now, nextId) {
     stock.nextAt = now + STOCK_INTERVAL;
 }
 
-function finishJob(ns, host, result, jobs, retryAt, routing, stock) {
-    if (!result) return;
-    const job = jobs.get(result.target);
-    if (!job || job.id !== result.id || (job.kind === "stock" && job.worker !== host)) return;
-    const { kind } = job;
-    jobs.delete(result.target);
-    retryAt.set(result.target, Date.now() + RETRY_DELAY);
-    if (kind === "stock") {
-        stock.latest = { host, at: Date.now(), success: result.success === true, status: result.status };
-    } else if (kind) {
-        routing.lastAction = { kind, host, target: result.target, status: result.status };
-    }
-    ns.print(`${host} → ${result.target}: ${result.status}`);
+function matchesAssignment(job, id, host, workerPid, now) {
+    return job && job.id === id && job.worker === host && job.pid === workerPid && job.expires > now;
 }
 
-function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle, stock) {
+function finishJob(ns, job, result, jobs, retryAt, routing, stock, now, retryDelay = RETRY_DELAY) {
+    const { kind, worker: host, target } = job;
+    jobs.delete(target);
+    if (retryDelay > 0) retryAt.set(target, now + retryDelay);
+    if (kind === "stock") {
+        stock.latest = { host, at: now, success: result.success === true, status: result.status };
+    } else if (kind) {
+        routing.lastAction = { kind, host, target, status: result.status };
+    }
+    ns.print(`${host} → ${target}: ${result.status}`);
+}
+
+function reconcileJobs(ns, workers, jobs, retryAt, routing, stock, now) {
+    for (const job of jobs.values()) {
+        if (job.expires <= now) {
+            finishJob(ns, job, { status: "job expired" }, jobs, retryAt, routing, stock, now);
+        } else if (!job.handoff && !ns.isRunning(job.pid)) {
+            if (workers.get(job.worker)?.pid === job.pid) workers.delete(job.worker);
+            finishJob(ns, job, { status: "assigned worker stopped" }, jobs, retryAt, routing, stock, now, 0);
+        }
+    }
+
+    const retained = new Set(routing.links);
+    if (routing.hub) retained.add(routing.hub);
+    for (const { worker, target } of jobs.values()) {
+        retained.add(worker);
+        retained.add(target);
+    }
+    for (const [host, worker] of workers) {
+        const agedOut = now - worker.at >= WORKER_RETENTION && !retained.has(host);
+        if (agedOut || (fresh(worker, now) && !ns.isRunning(worker.pid))) workers.delete(host);
+    }
+}
+
+function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle, stock, now) {
     while (!port.empty()) {
         const report = port.read();
         if (!report || typeof report.host !== "string") continue;
@@ -173,23 +198,7 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
             }
             continue;
         }
-        if (report.type === "lab") {
-            const job = jobs.get(report.target);
-            if (report.offlineEpoch === offlineEpoch && job?.kind === "lab" && job.id === report.id &&
-                job.worker === report.host) {
-                const { host, target, pid, coords, visited, steps, radar, status, done, solved, at } = report;
-                lab.latest = { host, target, pid, coords, visited, steps, radar, status, done, solved, at };
-                if (done) finishJob(ns, host, { id: report.id, target, status }, jobs, retryAt, routing, stock);
-                else job.expires = Date.now() + JOB_TTL;
-            }
-            continue;
-        }
-        if (report.type === "route") {
-            if (report.offlineEpoch === offlineEpoch) finishJob(ns, report.host, report.result, jobs, retryAt, routing, stock);
-            continue;
-        }
-        if (report.type !== "heartbeat") continue;
-        if (report.version !== WORKER_VERSION) {
+        if (report.type === "heartbeat" && report.version !== WORKER_VERSION) {
             const oldWorker = ns.ps(report.host).find(script =>
                 script.pid === report.pid && script.filename.replace(/^\//, "") === WORKER &&
                 script.args[0] === reportPort && script.args[1] === reportPort + 1);
@@ -197,16 +206,43 @@ function consumeReports(ns, port, reportPort, offlineEpoch, workers, jobs, retry
             continue;
         }
         if (report.offlineEpoch !== offlineEpoch) continue;
-        if (report.at < (workers.get(report.host)?.at ?? 0)) continue;
-        workers.set(report.host, report);
-        finishJob(ns, report.host, report.result, jobs, retryAt, routing, stock);
-        const incoming = jobs.get(report.host);
-        if (incoming && (!incoming.kind || incoming.kind === "recover") && incoming.worker !== report.host) {
-            if (incoming.kind === "recover") {
-                routing.lastAction = { kind: "recover", host: incoming.worker, target: report.host, status: "hub worker checked in" };
+        if (report.type === "lab") {
+            const job = jobs.get(report.target);
+            if (job?.kind === "lab" && matchesAssignment(job, report.id, report.host, report.workerPid, now)) {
+                const { host, target, pid, coords, visited, steps, radar, status, done, solved, at } = report;
+                lab.latest = { host, target, pid, coords, visited, steps, radar, status, done, solved, at };
+                if (done) finishJob(ns, job, report, jobs, retryAt, routing, stock, now);
+                else job.expires = now + JOB_TTL;
             }
-            jobs.delete(report.host);
+            continue;
         }
+        if (report.type === "handoff") {
+            const job = jobs.get(report.host);
+            if (job?.kind === "stasis" && !job.handoff &&
+                matchesAssignment(job, report.id, report.host, report.pid, now)) {
+                job.handoff = true;
+                job.expires = Math.min(job.expires, now + STASIS_HANDOFF_TTL);
+            }
+            continue;
+        }
+        if (report.type === "route") {
+            const result = report.result;
+            const job = jobs.get(result?.target);
+            if (job?.kind === report.kind && matchesAssignment(job, result?.id, report.host, report.workerPid, now) &&
+                (job.kind === "migrate" || job.kind === "stock" || (job.kind === "stasis" && job.handoff))) {
+                finishJob(ns, job, result, jobs, retryAt, routing, stock, now);
+            }
+            continue;
+        }
+        if (report.type !== "heartbeat") continue;
+        const result = report.result;
+        const job = jobs.get(result?.target);
+        if (matchesAssignment(job, result?.id, report.host, report.pid, now)) {
+            finishJob(ns, job, result, jobs, retryAt, routing, stock, now);
+        }
+        const current = workers.get(report.host);
+        if (current && (report.at < current.at || (report.pid !== current.pid && !ns.isRunning(report.pid)))) continue;
+        workers.set(report.host, report);
     }
 }
 
@@ -319,11 +355,9 @@ export async function main(ns) {
             if (!rootPid) ns.print("Waiting for enough home RAM to start the Darknet worker.");
         }
 
-        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle, stock);
+        consumeReports(ns, reports, reportPort, offlineEpoch, workers, jobs, retryAt, collected, routing, lab, idle, stock, now);
         refreshLinks(ns, routing, now);
-        for (const [target, job] of jobs) {
-            if (job.expires <= now || (job.kind !== "stasis" && !ns.isRunning(job.pid))) jobs.delete(target);
-        }
+        reconcileJobs(ns, workers, jobs, retryAt, routing, stock, now);
         for (const [target, until] of retryAt) {
             if (until <= now) retryAt.delete(target);
         }
