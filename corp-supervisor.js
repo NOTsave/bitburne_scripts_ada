@@ -1,6 +1,8 @@
 const SCRIPT = "corp.js";
 const CONFIG_FILE = "corp-supervisor.config.txt";
 const WORKER_OWNER_FILE = "/corp-worker-owner.txt";
+const DAEMON_READY_FILE = "/Temp/corp-daemon-ready.txt";
+const DAEMON_READY_TTL = 30_000;
 export const DEFAULT_CORP_HEADROOM = 32;
 const RETRY_MS = 30_000;
 const POLL_MS = 2_000;
@@ -78,14 +80,44 @@ export function planCorporationRam(script,measured,processes,headroom){
 export function corporationRamPlan(ns,headroom=DEFAULT_CORP_HEADROOM){
  const script=siblingScript(ns,SCRIPT);return planCorporationRam(script,ns.getScriptRam(script,'home'),ns.ps('home'),headroom);
 }
-export function corporationController(processes,node){
+export function corporationController(processes, readyDaemonPid){
  const candidates=processes.filter(p=>{
-  const file=canonical(p.filename).split('/').pop(),args=p.args??[];
-  return file==='corp-supervisor.js'||(file==='daemon.js'&&!args.includes('--corp-only')&&!args.includes('--no-corp')&&
-   !(args.some((a,i)=>a==='--disable-script'&&String(args[i+1]).split('/').pop()==='corp.js'))&&(node===3||args.includes('--corp')));
+  const path=canonical(p.filename),file=path.split('/').pop();
+  if(file==='corp-supervisor.js')return true;
+  if(file!=='daemon.js'||p.pid!==readyDaemonPid)return false;
+  const args=p.args??[];
+  const corpScript=path.slice(0,path.lastIndexOf('/')+1)+SCRIPT;
+  return !args.includes('--corp-only')&&!args.includes('--no-corp')&&
+   !args.some((arg,index)=>arg==='--disable-script'&&canonical(String(args[index+1]))===corpScript);
  });
  return candidates.sort((a,b)=>Number(canonical(a.filename).split('/').pop()!=='daemon.js')-
   Number(canonical(b.filename).split('/').pop()!=='daemon.js')||a.pid-b.pid)[0]??null;
+}
+
+function daemonReadiness(ns, now) {
+    const raw = ns.read?.(DAEMON_READY_FILE);
+    if (!raw) return null;
+    try {
+        const claim = JSON.parse(raw);
+        if (Number.isSafeInteger(claim?.pid) && claim.pid > 0 && Number.isFinite(claim.at) &&
+            claim.at <= now && now - claim.at < DAEMON_READY_TTL) return claim;
+    } catch {
+        // A missing or unreadable claim grants no authority.
+    }
+    return null;
+}
+
+export function publishCorporationDaemonReady(ns, ready) {
+    const now = Date.now();
+    const claim = daemonReadiness(ns, now);
+    if (!ready) {
+        if (claim?.pid === ns.pid) ns.write(DAEMON_READY_FILE, "", "w");
+        return;
+    }
+    if (claim?.pid === ns.pid && now - claim.at < DAEMON_READY_TTL / 3) return;
+    if (claim && claim.pid !== ns.pid &&
+        corporationController(ns.ps("home"), claim.pid)?.pid === claim.pid) return;
+    ns.write(DAEMON_READY_FILE, JSON.stringify({ pid: ns.pid, at: now }), "w");
 }
 function managedWorkerLaunch(ns, plan, processes) {
     const raw = ns.read(WORKER_OWNER_FILE);
@@ -106,7 +138,7 @@ export function createCorporationLauncher(){
   const processes=ns.ps('home');
   const headroom=effectiveCorporationHeadroom(config,ns.getServerMaxRam?.('home')??0);
   let plan=planCorporationRam(stale.script??SCRIPT,stale.measured,processes,headroom);
-  const owner=corporationController(processes,ns.getResetInfo?.().currentNode??0);
+  const owner=corporationController(processes,daemonReadiness(ns,Date.now())?.pid);
   if(owner&&ns.pid&&owner.pid!==ns.pid)return {...plan,state:'delegated',controllerPid:owner.pid};
   if(plan.legacy.length)return {...plan,state:'legacy-controller'};
   if(plan.writerCount>1)return {...plan,state:'multiple-writers'};
@@ -184,30 +216,37 @@ export async function runCorporationSupervisor(ns, overrides = {}) {
         return;
     }
     const readConfig=createCorporationConfigReader(overrides);
-    let config;
-    try {config=readConfig(ns);}catch(error){ns.tprint('[corp supervisor] '+error.message);return;}
     const supervise=createCorporationSupervisor();
-    let lastState,nextDaemonAttempt=0;
+    let lastState, profileError, nextDaemonAttempt=0;
     for (;;) {
-        config=readConfig(ns);
-        if(config.launcher==='daemon'){
+        let config;
+        try {
+            config = readConfig(ns);
+            profileError = undefined;
+        } catch (error) {
+            if (profileError !== error.message) ns.tprint("[corp supervisor] Waiting for profile repair: " + error.message);
+            profileError = error.message;
+            await ns.sleep(POLL_MS);
+            continue;
+        }
+        if(config.launcher==='daemon' && Date.now()>=nextDaemonAttempt){
             const script=siblingScript(ns,'daemon.js');
-            const existing=ns.ps('home').find(p=>canonical(p.filename)===script&&!(p.args??[]).includes('--corp-only'));
-            if(existing){ns.tprint('[corp callback] Attached to full daemon PID '+existing.pid);return;}
-            if(Date.now()>=nextDaemonAttempt){
+            const processes=ns.ps('home');
+            const existing=processes.some(p=>canonical(p.filename)===script&&!(p.args??[]).includes('--corp-only'));
+            const daemonPid=daemonReadiness(ns,Date.now())?.pid;
+            if(!existing && (!daemonPid || corporationController(processes,daemonPid)?.pid!==daemonPid)){
                 nextDaemonAttempt=Date.now()+RETRY_MS;
                 const ram=ns.getScriptRam(script,'home');
                 if(ram>0&&ns.getServerMaxRam('home')-ns.getServerUsedRam('home')>=ram){
                     const pid=ns.exec(script,'home',1,'--corp','--no-tail-windows');
-                    if(pid){ns.tprint('[corp callback] Started full daemon PID '+pid);return;}
+                    if(pid)ns.tprint('[corp callback] Started full daemon PID '+pid);
                 }
             }
-            await ns.sleep(POLL_MS);continue;
         }
         const result = supervise(ns, config);
-        if(result.state === "delegated"){ns.tprint("[corp supervisor] Delegated to launcher PID "+result.controllerPid);return;}
-        recordCorporationAttachment(ns,result,ns.getResetInfo());
-        const message = "[" + result.state + "] corp.js " + result.measured.toFixed(2) + " GB, target " +
+        if(result.state !== "delegated")recordCorporationAttachment(ns,result,ns.getResetInfo());
+        const message = result.state === "delegated" ? "Standing by for launcher PID " + result.controllerPid :
+            "[" + result.state + "] corp.js " + result.measured.toFixed(2) + " GB, target " +
             result.target.toFixed(2) + " GB" + (result.pid ? ", PID " + result.pid : "") +
             (result.free === undefined ? "" : ", free " + result.free.toFixed(2) + " GB");
         if (message !== lastState) {

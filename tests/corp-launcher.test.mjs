@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCorporationLauncher,planCorporationRam,corporationController,readCorporationSupervisorConfig,recordCorporationAttachment,corporationOverrides,runCorporationSupervisor } from '../corp-supervisor.js';
-import {serverSnapshotCommand,corporationBudget,corporationEligible,shouldRunRamManager} from '../daemon.js';
+import { createCorporationLauncher,planCorporationRam,corporationController,readCorporationSupervisorConfig,recordCorporationAttachment,corporationOverrides,runCorporationSupervisor,publishCorporationDaemonReady } from '../corp-supervisor.js';
+import {serverSnapshotCommand,corporationBudget,corporationEligible,corporationReady,createCorporationResetReader,shouldRunRamManager} from '../daemon.js';
 import {corporationDaemonArgs} from '../autopilot.js';
 import {formatTime} from '../helpers.js';
 import {main as corporationMain} from '../corp.js';
@@ -9,10 +9,13 @@ const config=()=>readCorporationSupervisorConfig({read:()=>'{"scaling":true,"cap
 const worker={filename:'corp.js',pid:10,args:['--apply']};
 
 test('full daemon and standalone elect one launcher even with a stale empty-worker plan',()=>{
- const processes=[{filename:'corp-supervisor.js',pid:2,args:[]},{filename:'daemon.js',pid:3,args:['--corp']}];let launched=0,ownership='';
- const ns={pid:3,ps:()=>processes,getResetInfo:()=>({currentNode:3}),read:()=>ownership,write:(_path,value)=>{ownership=value;},
+ const processes=[{filename:'corp-supervisor.js',pid:2,args:[]},{filename:'daemon.js',pid:3,args:['--corp']}];let launched=0;
+ const files=new Map();
+ const ns={pid:3,ps:()=>processes,read:path=>files.get(path)??'',write:(path,value)=>files.set(path,value),
   exec:(file,host,threads,...args)=>{processes.push({filename:file,pid:10,args});launched++;return 10;}};
  const stale=planCorporationRam('corp.js',900,[],32),a=createCorporationLauncher(),b=createCorporationLauncher();
+ assert.equal(corporationController(processes).pid,2);
+ publishCorporationDaemonReady(ns,true);
  assert.equal(a({...ns,pid:2},config(),stale,()=>4096).state,'delegated');
  assert.equal(a(ns,config(),stale,()=>4096).state,'launched');
  assert.equal(b(ns,config(),stale,()=>4096).state,'running');assert.equal(launched,1);
@@ -45,11 +48,95 @@ test('3.0.1 bulk metrics accept normal, cloud and non-hackable server snapshots 
  }
 });
 
-test('argument-free callback attaches to the full daemon and never launches another manager',async()=>{
- let execs=0;const ns={getHostname:()=> 'home',read:()=>'{"launcher":"daemon"}',getScriptName:()=> 'corp-supervisor.js',
-  ps:()=>[{filename:'daemon.js',pid:2,args:['--corp']},worker],tprint:()=>{},exec:()=>execs++};
- await runCorporationSupervisor(ns);assert.equal(execs,0);
+const STOP = new Error('end of supervisor test');
+
+function supervisorFixture(profile, daemons = []) {
+ const processes=[{filename:'corp-supervisor.js',pid:1,args:[]},...daemons];
+ const files=new Map([['corp-supervisor.config.txt',profile]]);
+ const logs=[], launches=[];
+ const ns={pid:1,getHostname:()=> 'home',read:path=>files.get(path)??'',getScriptName:()=> 'corp-supervisor.js',
+  getScriptRam:()=> 100,getServerMaxRam:()=> 2048,getServerUsedRam:()=> 0,
+  getResetInfo:()=>({currentNode:3,lastNodeReset:1,lastAugReset:1}),
+  ps:()=>processes,tprint:line=>logs.push(line),print:line=>logs.push(line),write:(path,value)=>files.set(path,value),
+  exec(file,host,threads,...args){launches.push(file);processes.push({filename:file,pid:10,args});return 10;},
+  sleep:async()=>{throw STOP;}};
+ return {ns,processes,files,logs,launches};
+}
+
+test('standalone startup waits for a valid profile and retains explicit overrides',async()=>{
+ const {ns,files,logs,launches,processes}=supervisorFixture('{');
+ let polls=0;
+ ns.sleep=async()=>{
+  if(++polls===1){
+   assert.deepEqual(launches,[]);
+   files.set('corp-supervisor.config.txt','{"capital":"off"}');
+  }else throw STOP;
+ };
+ await assert.rejects(runCorporationSupervisor(ns,{funding:'chain'}),error=>error===STOP);
+ assert.match(logs[0],/Waiting for profile repair/);
+ assert.deepEqual(launches,['corp.js']);
+ assert.ok(processes.at(-1).args.includes('--capital-off'));
+ assert.ok(processes.at(-1).args.includes('--fund-chain'));
+});
+
+test('daemon-mode callback supervises without replacing a disabled or unready daemon',async()=>{
+ for(const args of [['--no-corp'],['--disable-script','corp.js'],[]]){
+  const {ns,launches,processes}=supervisorFixture('{"launcher":"daemon"}',[{filename:'daemon.js',pid:2,args}]);
+  if(args.length)publishCorporationDaemonReady({...ns,pid:2},true);
+  await assert.rejects(runCorporationSupervisor(ns),error=>error===STOP);
+  assert.deepEqual(launches,['corp.js']);
+  assert.equal(processes[1].pid,2);
+ }
  assert.deepEqual(corporationOverrides({'corp-funding':'chain','corp-headroom':32,'corp-launcher':'daemon'}),{funding:'chain',headroom:32,headroomMode:'fixed',launcher:'daemon'});
+});
+
+test('supervisor waits through handoff and resumes without duplicating a live worker',async t=>{
+ let now=100_000,polls=0;
+ t.mock.method(Date,'now',()=>now);
+ const {ns,launches,logs,processes}=supervisorFixture('{}',[{filename:'daemon.js',pid:2,args:[]}]);
+ ns.sleep=async()=>{
+  if(++polls===1){
+   assert.deepEqual(launches,['corp.js']);
+   publishCorporationDaemonReady({...ns,pid:2},true);
+  }else if(polls===2){
+   assert.match(logs.at(-1),/Standing by for launcher PID 2/);
+   now+=30_000;
+  }else if(polls===3){
+   assert.match(logs.at(-1),/\[running\]/);
+   processes.pop();
+   now+=30_000;
+  }else if(polls===4){
+   assert.deepEqual(launches,['corp.js']);
+   assert.match(logs.at(-1),/\[backoff\]/);
+   now+=30_000;
+  }else throw STOP;
+ };
+ await assert.rejects(runCorporationSupervisor(ns),error=>error===STOP);
+ assert.deepEqual(launches,['corp.js','corp.js']);
+});
+
+test('reset info retries after low RAM and uses actual BN3 identity and start time',async t=>{
+ let now=1_000_000,attempts=0;
+ t.mock.method(Date,'now',()=>now);
+ const actual={currentNode:3,lastNodeReset:500_000,lastAugReset:999_999};
+ const readReset=createCorporationResetReader(async()=>{
+  if(++attempts===1)throw new Error('low RAM');
+  if(attempts===2)return {currentNode:3};
+  return actual;
+ });
+ assert.equal(await readReset(),undefined);
+ assert.equal(await readReset(),undefined);
+ assert.equal(attempts,1);
+ now+=30_000;
+ assert.equal(await readReset(),undefined);
+ now+=30_000;
+ assert.equal(await readReset(),actual);
+ assert.equal(corporationEligible({corp:false,'disable-script':[]},actual.currentNode,{},'corp.js'),true);
+ assert.equal(corporationReady(false,32,actual.lastNodeReset),false);
+ now=1_100_000;
+ assert.equal(corporationReady(false,32,actual.lastNodeReset),true);
+ assert.equal(await readReset(),actual);
+ assert.equal(attempts,3);
 });
 
 test('Autopilot preserves enable and opt-out arguments without mutating existing looping-mode flags',()=>{

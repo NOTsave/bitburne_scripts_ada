@@ -6,7 +6,8 @@ import {
     getFnRunViaNsExec, tail, autoRetry, getErrorInfo
 } from './helpers.js'
 import { corporationOptionSchema, corporationOverrides, createCorporationConfigReader, effectiveCorporationHeadroom,
-    planCorporationRam, createCorporationLauncher, siblingScript, corporationWriterKind, recordCorporationAttachment } from './corp-supervisor.js';
+    planCorporationRam, createCorporationLauncher, siblingScript, corporationWriterKind, recordCorporationAttachment,
+    publishCorporationDaemonReady } from './corp-supervisor.js';
 
 // daemon.js has histocially been the central orchestrator of almost every script in the game.
 // Only recently has it been "indentured" to an even higher-level orchestrator: autopilot.js
@@ -125,6 +126,24 @@ export function corporationReady(explicit, total, nodeStartedAt, now = Date.now(
     return explicit || (total >= 32 && Number.isFinite(nodeStartedAt) && now - nodeStartedAt >= 600_000);
 }
 
+export function createCorporationResetReader(probe) {
+    let reset;
+    let retryAt = 0;
+    return async () => {
+        const now = Date.now();
+        if (reset || now < retryAt) return reset;
+        retryAt = now + 30_000;
+        try {
+            const info = await probe();
+            if (Number.isInteger(info?.currentNode) && info.currentNode > 0 &&
+                Number.isFinite(info.lastNodeReset) && Number.isFinite(info.lastAugReset)) reset = info;
+        } catch {
+            // Retry without guessing the BitNode or its start time.
+        }
+        return reset;
+    };
+}
+
 // script entry point
 /** @param {NS} ns **/
 export async function main(ns) {
@@ -179,19 +198,47 @@ export async function main(ns) {
     let maxPreppingAtMaxTargets = 3; // The max servers we can prep when we're at our current max targets and have spare RAM
     // Allows some home ram to be reserved for ad-hoc terminal script running and when home is explicitly set as the "preferred server" for starting a helper
     let homeReservedRam = 0;
-    let readCorpConfig, corpConfig, nodeStartedAt, corpResetInfo, corpWorkerRam = 0, corpTarget = 0;
+    let readCorpConfig, corpConfig, corpProfileError, corpResetInfo, corpWorkerRam = 0, corpTarget = 0;
     const launchCorp = createCorporationLauncher();
     const corpScript = siblingScript(ns, 'corp.js');
+    const readCorporationReset = createCorporationResetReader(() => getNsDataThroughFile(ns, 'ns.getResetInfo()',
+        null, [], false, 1, 0, true));
+
+    function updateCorporationEligibility() {
+        if (corporationEligible(options, corpResetInfo?.currentNode ?? bitNodeN, dictSourceFiles, corpScript)) {
+            readCorpConfig ??= createCorporationConfigReader(corporationOverrides(options));
+        } else {
+            readCorpConfig = null;
+            corpConfig = null;
+        }
+    }
+
+    function launchReadyCorporation(ns, config, plan, getFreeRam) {
+        const available = plan.measured > 0 && !plan.legacy.length && plan.writerCount <= 1 &&
+            (plan.running ? plan.workerScript === plan.script : getFreeRam() >= plan.target);
+        publishCorporationDaemonReady(ns, available);
+        if (available) return launchCorp(ns, config, plan, getFreeRam);
+    }
 
     function refreshHomeReserve(launch = false) {
-        if(readCorpConfig){try{corpConfig=readCorpConfig(ns);}catch(error){ns.print("Corporation profile pending repair: "+error.message);}}
+        if (readCorpConfig) {
+            try {
+                corpConfig = readCorpConfig(ns);
+                corpProfileError = undefined;
+            } catch (error) {
+                if (corpProfileError !== error.message) ns.tprint("Corporation profile pending repair: " + error.message);
+                corpProfileError = error.message;
+            }
+        }
         const total = homeServer?.totalRam(true) ?? 0;
         const base = options['reserved-ram'] * (total >= options['double-reserve-threshold'] ? 2 : 1);
-        const budget = corporationBudget(ns, launch && launchCorp, corpConfig, corpScript, corpWorkerRam,
-            base, corporationReady(options.corp, total, nodeStartedAt), () => homeServer.ramAvailable(true));
+        const ready = corporationReady(options.corp, total, corpResetInfo?.lastNodeReset);
+        if (launch && (!corpConfig || !ready)) publishCorporationDaemonReady(ns, false);
+        const budget = corporationBudget(ns, launch && launchReadyCorporation, corpConfig, corpScript, corpWorkerRam,
+            base, ready, () => homeServer.ramAvailable(true));
         homeReservedRam = budget.reserved;
         corpTarget = budget.target;
-        if(corpResetInfo)recordCorporationAttachment(ns,budget,corpResetInfo);
+        if (corpResetInfo && budget.state && budget.state !== 'delegated') recordCorporationAttachment(ns, budget, corpResetInfo);
     }
 
     let allHostNames = (/**@returns {string[]}*/() => [])(); // simple name array of servers that have been discovered
@@ -360,31 +407,19 @@ export async function main(ns) {
         // Get information about the player's current stats (also populates a cache)
         const playerInfo = await getPlayerInfo(ns);
 
-        // Try to get "resetInfo", with a fallback for a failed dynamic call (i.e. low-ram conditions)
-        let resetInfo;
-        try {
-            resetInfo = await getNsDataThroughFile(ns, `ns.getResetInfo()`);
-        } catch {
-            resetInfo = { currentNode: 1, lastAugReset: Date.now() };
-        }
+        // The daemon can start in reduced mode while Corporation eligibility waits for real reset timestamps.
+        corpResetInfo = await readCorporationReset();
+        const resetInfo = corpResetInfo ?? { currentNode: 1, lastAugReset: Date.now() };
         bitNodeN = resetInfo.currentNode;
         dictSourceFiles = await getActiveSourceFiles_Custom(ns, getNsDataThroughFile);
         log(ns, "The following source files are active: " + JSON.stringify(dictSourceFiles));
 
         // Process configuration
         options = runOptions;
-        nodeStartedAt = resetInfo.lastNodeReset;
-        corpResetInfo = resetInfo;
         corpConfig = null;
         readCorpConfig = null;
-        if (corporationEligible(options, bitNodeN, dictSourceFiles, corpScript)) {
-            try {
-                readCorpConfig = createCorporationConfigReader(corporationOverrides(options));
-                corpConfig = readCorpConfig(ns);
-            } catch (error) {
-                ns.tprint("Corporation management disabled: " + error.message);
-            }
-        }
+        corpProfileError = undefined;
+        updateCorporationEligibility();
         hackOnly = options.h || options['hack-only'];
         xpOnly = options.x || options['xp-only'];
         stockMode = (options.s || options['stock-manipulation'] || options['stock-manipulation-focus']) && !options['disable-stock-manipulation'];
@@ -674,6 +709,10 @@ export async function main(ns) {
     /** Checks whether it's time for any scheduled tasks to run
      * @param {NS} ns */
     async function runPeriodicScripts(ns) {
+        if (!corpResetInfo) {
+            corpResetInfo = await readCorporationReset();
+            if (corpResetInfo) updateCorporationEligibility();
+        }
         refreshHomeReserve(true);
         let launched = 0;
         for (const script of periodicScripts) {
@@ -2479,7 +2518,7 @@ export async function main(ns) {
         allTools.forEach(script => script.name = getFilePath(script.name));
         // Get the cost (RAM) of each tool from the API
         const paths = allTools.map(tool => tool.name);
-        if (corpConfig) paths.push(corpScript);
+        paths.push(corpScript);
         let toolCosts = await getNsDataThroughFile(ns, `Object.fromEntries(ns.args.map(s => [s, ns.getScriptRam(s, 'home')]))`,
             '/Temp/script-costs.txt', paths);
         corpWorkerRam = toolCosts[corpScript] ?? 0;
