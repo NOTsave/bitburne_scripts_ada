@@ -126,6 +126,29 @@ const BOOSTS = Object.keys(CONFIG.boostWeights);
 const MARKET_TA_RESEARCH = ["Hi-Tech R&D Laboratory", "Market-TA.I", "Market-TA.II"];
 const RAMP_JOBS = { Operations: 3, Engineer: 3, Business: 1, Management: 1, "Research & Development": 1 };
 
+// Netscript supplies a separate NS object to each worker. Cache successful reads only.
+const corporationMetadata = new WeakMap();
+
+function metadataFor(ns) {
+    let metadata = corporationMetadata.get(ns);
+    if (!metadata) {
+        metadata = { materials: new Map() };
+        corporationMetadata.set(ns, metadata);
+    }
+    return metadata;
+}
+
+function getConstantsOnce(ns, call) {
+    const metadata = metadataFor(ns);
+    return metadata.constants ??= call("getConstants", () => ns.corporation.getConstants());
+}
+
+function getMaterialOnce(ns, call, name) {
+    const { materials } = metadataFor(ns);
+    if (!materials.has(name)) materials.set(name, call("getMaterialData " + name, () => ns.corporation.getMaterialData(name)));
+    return materials.get(name);
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
     const call = (method, fn) => {
@@ -593,7 +616,7 @@ function inspect(ns, call, readyRound, manageExpansion = true, preset = CONFIG.p
 
     // A failed detail read still permits observing the corporation's market updates.
     try {
-        const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
+        const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
         details.secondsPerMarketCycle = seconds;
         const offer = corp.public ? null : call("getInvestmentOffer", () => ns.corporation.getInvestmentOffer());
         details.treasury = treasurySnapshot(corp, seconds);
@@ -661,12 +684,12 @@ function planCorporation(ns, call, corp, offer, details, readyRound, manageExpan
         setup.push("Open " + CONFIG.starter.name + " (Agriculture)");
         setupCost += call("getIndustryData Agriculture", () => ns.corporation.getIndustryData("Agriculture")).startingCost;
     } else if (!starter.cities.includes(CONFIG.starter.city)) {
-        const constants = call("getConstants", () => ns.corporation.getConstants());
+        const constants = getConstantsOnce(ns, call);
         setup.push("Open starter office and warehouse in " + CONFIG.starter.city);
         setupCost += constants.officeInitialCost + constants.warehouseInitialCost;
     } else if (!missing.includes("Warehouse API") && !hasStarterWarehouse(ns, call, starter.name)) {
         setup.push("Purchase starter warehouse in " + CONFIG.starter.city);
-        setupCost += call("getConstants", () => ns.corporation.getConstants()).warehouseInitialCost;
+        setupCost += getConstantsOnce(ns, call).warehouseInitialCost;
     } else if (!missing.length) {
         const city = CONFIG.starter.city;
         const office = call("getOffice " + starter.name, () => ns.corporation.getOffice(starter.name, city));
@@ -833,7 +856,7 @@ export function reconcileWarehousePressure(ns, call, plan, manageExpansion = tru
         !call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API"))) return [];
     const corp = ns.corporation;
     const live = call("getCorporation", () => corp.getCorporation());
-    const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
+    const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
     const results = [];
     for (const { division, city } of managedSites(ns, call, live.divisions, manageExpansion)) {
         if (!call("hasWarehouse", () => corp.hasWarehouse(division.name, city))) continue;
@@ -1015,7 +1038,7 @@ function supplyIsStable(ns, call, readiness, division, city, office, warehouse, 
 
 function preparePurchases(ns, call, division, warehouse, spendable, profitable, ramped, manualSupply = false,
     city = CONFIG.starter.city, boostBudget = CONFIG.boostPurchaseBudget, inputCycles = 0) {
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => ns.corporation.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     const industry = call("getIndustryData", () => ns.corporation.getIndustryData(division.industry));
     const inputs = INPUTS.map(name => readStock(ns, call, division.name, name, city));
     const room = Math.max(0, warehouse.size * CONFIG.warehouseFill - warehouse.sizeUsed);
@@ -1090,7 +1113,7 @@ function boostBudgetForSite(plan) {
 
 function readStock(ns, call, division, name, city = CONFIG.starter.city) {
     const data = readMaterial(ns, call, division, name, city);
-    const { size } = call("getMaterialData " + name, () => ns.corporation.getMaterialData(name));
+    const { size } = getMaterialOnce(ns, call, name);
     return { ...data, name, size };
 }
 
@@ -1146,7 +1169,7 @@ function readSettlement(ns, call, allowZeroRevenue = false) {
     if (!starter || (!allowZeroRevenue && !(starter.lastCycleRevenue > 0)) ||
         !call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API")) ||
         !hasStarterWarehouse(ns, call, starter.name)) return null;
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => ns.corporation.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     return {
         division: starter.name,
         receipts: starter.lastCycleRevenue * seconds,
@@ -1192,7 +1215,7 @@ function finishBootstrapOrders(ns, call, settlement) {
 function priceStarterOutputs(ns, call, division, warehouse, city = CONFIG.starter.city) {
     const ta1 = call("hasResearched Market-TA.I", () => ns.corporation.hasResearched(division.name, "Market-TA.I"));
     const ta2 = call("hasResearched Market-TA.II", () => ns.corporation.hasResearched(division.name, "Market-TA.II"));
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => ns.corporation.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     const crowded = warehouse.sizeUsed >= warehouse.size * CONFIG.warehouseFill;
     let changed = false;
     for (const name of OUTPUTS) {
@@ -1206,7 +1229,7 @@ function priceStarterOutputs(ns, call, division, warehouse, city = CONFIG.starte
             if (crowded) price = "MP*0.85";
             else if (backlog) price = "MP*0.95";
             else if (strongSales) {
-                const { baseMarkup } = call("getMaterialData " + name, () => ns.corporation.getMaterialData(name));
+                const { baseMarkup } = getMaterialOnce(ns, call, name);
                 // The game penalizes sales above market price plus quality / baseMarkup.
                 const markup = Math.floor(stock.quality / baseMarkup * 0.9 * 1e6) / 1e6;
                 if (Number.isFinite(markup) && markup > 0) price = "MP+" + markup.toFixed(6);
@@ -1264,7 +1287,7 @@ function reconcileExports(ns, call, source, spendable, manageTobacco = false) {
         eligible.push({ ...route, target, required: data.requiredMaterials[route.material] });
     }
     if (!eligible.length) return false;
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => ns.corporation.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     const sender = new Map();
     const receiver = new Map();
     const inbound = new Map();
@@ -1408,7 +1431,7 @@ function purchaseSnapshot(ns, call) {
     if (!division?.cities.includes(CONFIG.starter.city) ||
         !call("hasUnlock Warehouse API", () => ns.corporation.hasUnlock("Warehouse API")) ||
         !hasStarterWarehouse(ns, call, division.name)) return null;
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => ns.corporation.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     const stocks = [...INPUTS, ...BOOSTS].map(name => {
         const data = readMaterial(ns, call, division.name, name);
         return { name, stored: data.stored, price: data.marketPrice, buyRate: data.buyAmount };
@@ -1466,9 +1489,8 @@ export function careForManagedOffices(ns, call, plan, recovering, manageExpansio
     }
     const sites = managedSites(ns, call, plan.divisions, manageExpansion);
     const staffedSites = new Set();
-    const { teaCostPerEmployee } = call("getConstants", () => corp.getConstants());
+    const { teaCostPerEmployee, secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     const live = call("getCorporation", () => corp.getCorporation());
-    const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
     const budget = Math.max(0, Math.min(CONFIG.officeCareBudget, live.funds - operatingReserve(live.expenses, seconds, live.revenue),
         (live.revenue - live.expenses) * seconds * CONFIG.officeCareProfitShare));
     totals.budget = budget;
@@ -1805,7 +1827,7 @@ function acceptFunding(ns, call, decision, allowChain = false) {
     const satellite = first ? satelliteHasSales(ns, call, starter) : Boolean(sales?.satelliteSelling);
     const leanPackage = twoProductWindow(allowChain, sales, decision.window ?? []);
     const rule = fundingPackageForRound(offer.round, satellite, sales?.tobaccoEstablished, leanPackage);
-    const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
+    const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
     const reserve = operatingReserve(before.expenses, seconds, before.revenue);
     const { coverageNeeded, projectedProfit, floor, target } = rule
         ? fundingCoverage(rule, before.funds, reserve, before.revenue - before.expenses, seconds, first)
@@ -1969,7 +1991,7 @@ export function deployRound3Package(ns, call, plan) {
     if (next.kind !== "unlock") return buyRankedUpgrade(ns, call, next);
     const corp = ns.corporation;
     const live = call("getCorporation", () => corp.getCorporation());
-    const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
+    const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
     const spendable = live.funds - operatingReserve(live.expenses, seconds, live.revenue) - 3 * CONFIG.purchaseBudget;
     const quote = call("getUnlockCost Export", () => corp.getUnlockCost("Export"));
     if (!Number.isFinite(quote) || quote <= 0 || quote > next.packageLimit || quote > spendable) return null;
@@ -1983,7 +2005,7 @@ export function deployRound3Package(ns, call, plan) {
 
 function buyRankedUpgrade(ns, call, candidate) {
     const before = call("getCorporation", () => ns.corporation.getCorporation());
-    const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
+    const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
     const advert = candidate.kind === "advert";
     const level = advert ? call("getDivision", () => ns.corporation.getDivision(candidate.division)).numAdVerts :
         call("getUpgradeLevel " + candidate.name, () => ns.corporation.getUpgradeLevel(candidate.name));
@@ -2204,7 +2226,7 @@ function reconcileExpansion(ns, call, plan, completedPhase, productTA, weakProdu
 
 function prepareExpansionOffice(ns, call, division, city, jobs, spendable) {
     const corp = ns.corporation;
-    const constants = call("getConstants", () => corp.getConstants());
+    const constants = getConstantsOnce(ns, call);
     if (!division.cities.includes(city)) {
         if (spendable < constants.officeInitialCost + constants.warehouseInitialCost) return false;
         call("expandCity " + city, () => corp.expandCity(division.name, city));
@@ -2238,7 +2260,7 @@ function reconcileTobaccoSupply(ns, call, division, city, warehouse, phase, comp
     const key = division.name + "/" + city;
     if (phase === "PURCHASE" && CONFIG.tobacco.exportPlants && call("hasUnlock Export", () => corp.hasUnlock("Export"))) {
         const plants = readStock(ns, call, division.name, "Plants", city);
-        const { secondsPerMarketCycle: seconds } = call("getConstants", () => corp.getConstants());
+        const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
         const { requiredMaterials } = call("getIndustryData", () => corp.getIndustryData(division.industry));
         const target = tobaccoInputTarget(ns, call, division, city, requiredMaterials.Plants, plants, seconds);
         const sufficient = plants.importAmount > 0 && plants.stored + CONFIG.tobacco.exportStockTolerance >= target;
@@ -2271,10 +2293,10 @@ function reconcileExpansionInputs(ns, call, division, city, warehouse, budget, b
     if (warehouse.smartSupplyEnabled) return 0;
     const corp = ns.corporation;
     const { requiredMaterials } = call("getIndustryData", () => corp.getIndustryData(division.industry));
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => corp.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     const inputs = Object.keys(requiredMaterials).map(name => {
         const material = call("getMaterial " + name, () => corp.getMaterial(division.name, city, name));
-        const { size } = call("getMaterialData " + name, () => corp.getMaterialData(name));
+        const { size } = getMaterialOnce(ns, call, name);
         const target = bufferProducts
             ? tobaccoInputTarget(ns, call, division, city, requiredMaterials[name], material, seconds)
             : Math.max(requiredMaterials[name] * CONFIG.starterProductionUnits, -material.productionAmount * seconds * 1.1);
@@ -2353,7 +2375,7 @@ function priceTobacco(ns, call, division, products, adjustExisting = true, holdA
     const corp = ns.corporation;
     const ta1 = call("hasResearched Market-TA.I", () => corp.hasResearched(division.name, "Market-TA.I"));
     const ta2 = call("hasResearched Market-TA.II", () => corp.hasResearched(division.name, "Market-TA.II"));
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => corp.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     for (const product of products.filter(item => item.progress >= 100)) {
         if (ta1) call("setProductMarketTA1 " + product.name, () => corp.setProductMarketTA1(division.name, product.name, !ta2));
         if (ta2) call("setProductMarketTA2 " + product.name, () => corp.setProductMarketTA2(division.name, product.name, true));
@@ -2433,7 +2455,7 @@ function readTobaccoInputs(ns, call, divisions) {
     if (!division?.cities.includes(city) || !call("hasUnlock Warehouse API", () => corp.hasUnlock("Warehouse API")) ||
         !call("hasWarehouse", () => corp.hasWarehouse(division.name, city))) return null;
     const { requiredMaterials } = call("getIndustryData", () => corp.getIndustryData(division.industry));
-    const { secondsPerMarketCycle: seconds } = call("getConstants", () => corp.getConstants());
+    const { secondsPerMarketCycle: seconds } = getConstantsOnce(ns, call);
     const inputs = readProductionStocks(ns, call, division.name, city, Object.keys(requiredMaterials));
     for (const stock of inputs.stocks) {
         const material = readMaterial(ns, call, division.name, stock.name, city);
@@ -2533,7 +2555,7 @@ export function reconcilePublicFinances(ns, call, plan, options, profitStreak, s
     const corp = ns.corporation;
     const live = call("getCorporation", () => corp.getCorporation());
     const afterStart = settled && live.nextState === "PURCHASE";
-    const seconds = call("getConstants", () => corp.getConstants()).secondsPerMarketCycle;
+    const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
     const reserve = operatingReserve(live.expenses, seconds, live.revenue);
     const healthy = live.funds >= reserve * CONFIG.preservationRecoveryBuffer && live.revenue > live.expenses &&
         profitStreak >= CONFIG.market.profitSettlements && !preserving && !plan.cashExpansion && !plan.blocker;
@@ -2669,7 +2691,7 @@ export function reconcileLiquidation(ns, call, settings = CONFIG.liquidation) {
     }
     const division = call("getDivision", () => corp.getDivision(entry.name));
     if (division.industry !== entry.industry) return { blocker: "Industry changed for " + entry.name };
-    const constants = call("getConstants", () => corp.getConstants());
+    const constants = getConstantsOnce(ns, call);
     const outgoing = divisionRoutes(ns, call, [division], constants.materialNames);
     for (const route of outgoing) {
         if (route.division === division.name || !before.divisions.includes(route.division)) continue;
@@ -2725,7 +2747,7 @@ export function supplySampleHealthy(sample) {
 export function planProductionScaling(ns, call, plan, evidence = {}) {
     const settings = CONFIG.scaling;
     const live = call("getCorporation", () => ns.corporation.getCorporation());
-    const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
+    const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
     const round = live.public ? 5 : call("getInvestmentOffer", () => ns.corporation.getInvestmentOffer()).round;
     const reserve = operatingReserve(live.expenses, seconds, live.revenue);
     const excess = Math.max(0, live.funds - reserve);
@@ -2787,7 +2809,7 @@ export function planProductionScaling(ns, call, plan, evidence = {}) {
 
 export function deployProductionScaling(ns, call, plan, candidate) {
     const live = call("getCorporation", () => ns.corporation.getCorporation());
-    const seconds = call("getConstants", () => ns.corporation.getConstants()).secondsPerMarketCycle;
+    const seconds = getConstantsOnce(ns, call).secondsPerMarketCycle;
     const excess = Math.max(0, live.funds - operatingReserve(live.expenses, seconds, live.revenue));
     const budget = Math.max(0, excess - 2 * tobaccoInvestment(excess)) * CONFIG.scaling.cashFraction;
     if (live.nextState !== "PURCHASE" || !(live.revenue > live.expenses) || plan.blocker) return null;

@@ -205,6 +205,17 @@ test("whole loop prioritizes the approved package over a populated discretionary
 
 for (const publicCorp of [false,true]) test("phase loop covers adopted cities in " + (publicCorp ? "STEADY" : "GROW"), async () => {
     const f = fixture({adopted:true,publicCorp});
+    const getConstants = f.api.getConstants, getMaterialData = f.api.getMaterialData;
+    let constantReads = 0;
+    const materialReads = new Map();
+    f.api.getConstants = () => {
+        constantReads++;
+        return getConstants();
+    };
+    f.api.getMaterialData = name => {
+        materialReads.set(name, (materialReads.get(name) ?? 0) + 1);
+        return getMaterialData(name);
+    };
     for (const d of ["Agri","Tobacco"]) for (const c of f.divisions[d].cities) {
         f.offices[d+"/"+c].avgEnergy=80; f.offices[d+"/"+c].avgMorale=80;
         for (const n of Object.keys(d === "Agri" ? {Water:1,Chemicals:1} : {Plants:1})) f.material(d,c,n).stored=0;
@@ -220,6 +231,9 @@ for (const publicCorp of [false,true]) test("phase loop covers adopted cities in
     assert.ok(f.heartbeats.every(h=>!h.blocker),f.logs.join("\n"));
     assert.ok(f.heartbeats.some(h=>h.lastFullCycle?.length===5));
     assert.ok(!f.mutations.some(([,d])=>d==="Unlisted"));
+    assert.equal(constantReads, 1);
+    assert.ok(materialReads.size > 1);
+    assert.ok([...materialReads.values()].every(count => count === 1));
 });
 
 
